@@ -65,8 +65,8 @@ public final class Indexer {
         self.root = root
         self.rules = rules
         insertMessage = try db.prepare("""
-            INSERT INTO messages(file_id, session_id, role, ts, text, tool_name, file_path, is_sidechain)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO messages(file_id, session_id, role, ts, text, record_id, is_sidechain)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """)
         insertDoc = try db.prepare("""
             INSERT INTO docs(file_id, source, path, kind, title, body, project, session_id, ts)
@@ -283,12 +283,13 @@ public final class Indexer {
                 }
                 if let branch = record["gitBranch"] as? String, !branch.isEmpty { info.branch = branch }
 
-                for block in Self.blocks(of: message, role: type) {
-                    let text = Secrets.maskText(block.text)
-                    try insertMessage.run(
-                        fileID, sessionID, block.role, ts, text, block.toolName, block.filePath, sidechain)
+                let uuid = record["uuid"] as? String
+                for (index, block) in Self.textBlocks(of: message).enumerated() {
+                    let text = Secrets.maskText(block)
+                    let recordID = uuid.map { "\($0)#\(index)" }
+                    try insertMessage.run(fileID, sessionID, type, ts, text, recordID, sidechain)
                     stats.messages += 1
-                    if block.role == "user", !sidechain, info.firstPrompt == nil {
+                    if type == "user", !sidechain, info.firstPrompt == nil {
                         info.firstPrompt = Self.titleLine(text)
                     }
                 }
@@ -306,34 +307,17 @@ public final class Indexer {
         return end
     }
 
-    private struct Block {
-        let role: String
-        let text: String
-        var toolName: String? = nil
-        var filePath: String? = nil
-    }
-
-    /// User and assistant text, plus tool name and file path from tool calls.
-    /// Tool results, thinking and images are left out.
-    private static func blocks(of message: [String: Any], role: String) -> [Block] {
+    /// The text a user or assistant wrote. Tool calls, tool results, thinking and images are left out.
+    private static func textBlocks(of message: [String: Any]) -> [String] {
         if let text = message["content"] as? String {
-            return text.isBlank ? [] : [Block(role: role, text: text)]
+            return text.isBlank ? [] : [text]
         }
         guard let content = message["content"] as? [[String: Any]] else { return [] }
         return content.compactMap { block in
-            switch block["type"] as? String {
-            case "text":
-                guard let text = block["text"] as? String, !text.isBlank else { return nil }
-                return Block(role: role, text: text)
-            case "tool_use":
-                guard let name = block["name"] as? String else { return nil }
-                let input = block["input"] as? [String: Any] ?? [:]
-                let path = (input["file_path"] ?? input["notebook_path"] ?? input["path"]) as? String
-                let text = [name, path].compactMap { $0 }.joined(separator: " ")
-                return Block(role: "tool", text: text, toolName: name, filePath: path)
-            default:
+            guard block["type"] as? String == "text", let text = block["text"] as? String, !text.isBlank else {
                 return nil
             }
+            return text
         }
     }
 

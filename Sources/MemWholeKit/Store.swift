@@ -2,6 +2,11 @@ import Foundation
 
 /// Read-side queries shared by the CLI and the app.
 public enum Store {
+    /// SQL condition on messages aliased `m`: true for the first stored copy of a record.
+    static let firstCopy = """
+        NOT EXISTS (SELECT 1 FROM messages earlier WHERE earlier.record_id = m.record_id AND earlier.id < m.id)
+        """
+
     /// `$MEMWHOLE_DB`, or `~/Library/Application Support/MemWhole/index.sqlite`.
     public static var defaultDatabasePath: String {
         if let path = ProcessInfo.processInfo.environment["MEMWHOLE_DB"] {
@@ -65,9 +70,9 @@ public enum Store {
 
     public static func messages(db: Database, sessionID: String, includeSidechain: Bool) throws -> [Message] {
         let stmt = try db.prepare("""
-            SELECT id, role, ts, text, is_sidechain FROM messages
-            WHERE session_id = ? AND (? OR is_sidechain = 0)
-            ORDER BY ts, id
+            SELECT m.id, m.role, m.ts, m.text, m.is_sidechain FROM messages m
+            WHERE m.session_id = ? AND (? OR m.is_sidechain = 0) AND \(firstCopy)
+            ORDER BY m.ts, m.id
             """)
         try stmt.bind([sessionID, includeSidechain])
         var messages: [Message] = []
@@ -96,7 +101,8 @@ public enum Store {
         counts.sessions = Int(try db.prepare("SELECT COUNT(*) FROM sessions").scalar() ?? 0)
         counts.files = Int(try db.prepare("SELECT COUNT(*) FROM files").scalar() ?? 0)
 
-        let roles = try db.prepare("SELECT role, is_sidechain, COUNT(*) FROM messages GROUP BY 1, 2 ORDER BY 3 DESC")
+        let roles = try db.prepare(
+            "SELECT role, is_sidechain, COUNT(*) FROM messages m WHERE \(firstCopy) GROUP BY 1, 2 ORDER BY 3 DESC")
         while try roles.step() {
             counts.messages.append((roles.text(0) ?? "", roles.int(1) != 0, roles.int(2)))
         }

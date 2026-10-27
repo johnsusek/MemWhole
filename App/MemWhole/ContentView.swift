@@ -27,6 +27,14 @@ struct ContentView: View {
                 .help("Limit results to one kind")
             }
             ToolbarItem {
+                Picker("Sort", selection: $model.sort) {
+                    Text("Newest First").tag(SearchSort.date)
+                    Text("Best Match").tag(SearchSort.relevance)
+                }
+                .pickerStyle(.menu)
+                .help("Order of results")
+            }
+            ToolbarItem {
                 if model.isIndexing {
                     ProgressView().controlSize(.small)
                 } else {

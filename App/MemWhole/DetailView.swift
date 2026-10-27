@@ -72,32 +72,23 @@ struct MessageView: View {
     let isFocus: Bool
 
     var body: some View {
-        if message.role == "tool" {
-            Label(Format.path(message.text), systemImage: "wrench.and.screwdriver")
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .padding(.leading, 8)
-                .padding(4)
-                .background(isFocus ? Color.yellow.opacity(0.2) : .clear, in: RoundedRectangle(cornerRadius: 4))
-        } else {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    RoleBadge(role: message.role)
-                    if message.sidechain {
-                        Text("agent").font(.caption2).foregroundStyle(.secondary)
-                    }
-                    Text(Format.date(message.ts)).font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                RoleBadge(role: message.role)
+                if message.sidechain {
+                    Text("agent").font(.caption2).foregroundStyle(.secondary)
                 }
-                Text(message.text)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(Format.date(message.ts)).font(.caption).foregroundStyle(.secondary)
             }
-            .padding(10)
-            .background(background, in: RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                if isFocus {
-                    RoundedRectangle(cornerRadius: 8).strokeBorder(Color.yellow.opacity(0.7), lineWidth: 1.5)
-                }
+            Text(message.text)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(10)
+        .background(background, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            if isFocus {
+                RoundedRectangle(cornerRadius: 8).strokeBorder(Color.yellow.opacity(0.7), lineWidth: 1.5)
             }
         }
     }

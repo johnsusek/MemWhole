@@ -4,7 +4,7 @@ public struct SearchOptions: Sendable {
     public var query = ""
     public var limit = 20
     public var project: String?
-    /// user | assistant | tool. Limits results to transcript messages.
+    /// user | assistant. Limits results to transcript messages.
     public var role: String?
     /// Doc kind (memory, skill, prompt...). Limits results to docs.
     public var kind: String?
@@ -12,19 +12,25 @@ public struct SearchOptions: Sendable {
     public var since: String?
     /// Pass the query to FTS5 as written instead of quoting each word.
     public var raw = false
+    public var sort = SearchSort.date
 
     public init() {}
+}
+
+public enum SearchSort: String, CaseIterable, Sendable {
+    /// Newest first, ties broken by relevance.
+    case date
+    case relevance
 }
 
 public struct Hit: Encodable, Sendable, Identifiable {
     public let type: String          // message | doc
     public let rowID: Int64
     public let sessionID: String?
-    public let role: String          // user | assistant | tool, or the doc kind
+    public let role: String          // user | assistant, or the doc kind
     public let ts: String?
     public let project: String?
     public let title: String?
-    public let toolName: String?
     public let path: String?
     public let sidechain: Bool
     public let snippet: String
@@ -61,13 +67,13 @@ public enum Search {
         if options.kind == nil {
             var sql = """
                 SELECT 'message', m.id, m.session_id, m.role, m.ts, s.project,
-                       COALESCE(s.custom_title, s.ai_title, s.first_prompt), m.tool_name, m.file_path, m.is_sidechain,
+                       COALESCE(s.custom_title, s.ai_title, s.first_prompt), NULL, m.is_sidechain,
                        snippet(messages_fts, 0, ?, ?, '…', 24),
                        bm25(messages_fts) * CASE WHEN m.is_sidechain THEN \(sidechainWeight) ELSE 1.0 END
                 FROM messages_fts
                 JOIN messages m ON m.id = messages_fts.rowid
                 LEFT JOIN sessions s ON s.id = m.session_id
-                WHERE messages_fts MATCH ?
+                WHERE messages_fts MATCH ? AND \(Store.firstCopy)
                 """
             params += [marks.open, marks.close, match]
             if let role = options.role { sql += " AND m.role = ?"; params.append(role) }
@@ -80,7 +86,7 @@ public enum Search {
             let lowKinds = lowKinds.map { "'\($0)'" }.joined(separator: ", ")
             var sql = """
                 SELECT 'doc', d.id, d.session_id, d.kind, d.ts, COALESCE(d.project, s.project),
-                       d.title, NULL, d.path, 0,
+                       d.title, d.path, 0,
                        snippet(docs_fts, -1, ?, ?, '…', 24),
                        bm25(docs_fts, 4.0, 1.0) * CASE WHEN d.kind IN (\(lowKinds)) THEN \(lowKindWeight) ELSE 1.0 END
                 FROM docs_fts
@@ -98,7 +104,8 @@ public enum Search {
             selects.append(sql)
         }
 
-        let sql = selects.joined(separator: "\nUNION ALL\n") + "\nORDER BY 12 LIMIT ?"
+        let sql = selects.joined(separator: "\nUNION ALL\n")
+            + (options.sort == .date ? "\nORDER BY 5 DESC, 11 LIMIT ?" : "\nORDER BY 11 LIMIT ?")
         params.append(options.limit)
 
         let stmt = try db.prepare(sql)
@@ -113,11 +120,10 @@ public enum Search {
                 ts: stmt.text(4),
                 project: stmt.text(5),
                 title: stmt.text(6),
-                toolName: stmt.text(7),
-                path: stmt.text(8),
-                sidechain: stmt.int(9) != 0,
-                snippet: stmt.text(10) ?? "",
-                score: stmt.double(11)))
+                path: stmt.text(7),
+                sidechain: stmt.int(8) != 0,
+                snippet: stmt.text(9) ?? "",
+                score: stmt.double(10)))
         }
         return hits
     }

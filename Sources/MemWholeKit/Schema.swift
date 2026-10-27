@@ -1,7 +1,8 @@
 import Foundation
 
 public enum Schema {
-    static let version = 1
+    /// Bump when the tables change. An index with another version is deleted and rebuilt.
+    static let version = 3
 
     static let sql = """
     PRAGMA journal_mode = WAL;
@@ -37,15 +38,17 @@ public enum Schema {
         id INTEGER PRIMARY KEY,
         file_id INTEGER NOT NULL,
         session_id TEXT NOT NULL,
-        role TEXT NOT NULL,          -- user | assistant | tool
+        role TEXT NOT NULL,          -- user | assistant
         ts TEXT,
         text TEXT NOT NULL,
-        tool_name TEXT,
-        file_path TEXT,
+        -- `<record uuid>#<block>`. A resumed session's file repeats earlier records, so the same
+        -- record can be stored once per file; reads keep the first copy.
+        record_id TEXT,
         is_sidechain INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id, ts);
     CREATE INDEX IF NOT EXISTS messages_file ON messages(file_id);
+    CREATE INDEX IF NOT EXISTS messages_record ON messages(record_id);
 
     CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
         text, content='messages', content_rowid='id',
@@ -89,7 +92,14 @@ public enum Schema {
         if !directory.isEmpty {
             try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         }
-        let db = try Database(path: path)
+        var db = try Database(path: path)
+        let stored = try? db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").scalar()
+        if let stored, stored != Int64(version) {
+            // The index is a cache of the source folders, so an old layout is rebuilt rather than migrated.
+            db = try Database(path: ":memory:")
+            for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) }
+            db = try Database(path: path)
+        }
         try db.exec(sql)
         try db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)").run(String(version))
         return db

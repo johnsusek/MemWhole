@@ -26,9 +26,9 @@ The index lives at `~/Library/Application Support/MemWhole/index.sqlite`, or whe
 ## Search
 
 - Words are ANDed; the last word matches as a prefix. `--raw` passes FTS5 syntax through (`"exact phrase"`, `OR`, `NOT`).
-- Filters: `--project TEXT`, `--role user|assistant|tool`, `--kind memory|skill|prompt|snapshot|...`, `--since 2026-10-01` or `--since 7d`, `--limit N`.
+- Filters: `--project TEXT`, `--role user|assistant`, `--kind memory|skill|prompt|snapshot|...`, `--since 2026-10-01` or `--since 7d`, `--limit N`.
 - `--json` prints machine-readable hits for a future UI.
-- Sub-agent messages, `history.jsonl` prompts (which repeat transcript prompts), snapshots and plugin docs rank lower.
+- Results are newest first. `--sort relevance` ranks by match quality instead, where sub-agent messages, `history.jsonl` prompts (which repeat transcript prompts), snapshots and plugin docs rank lower.
 
 ## Layout
 

@@ -4,7 +4,7 @@ import Observation
 
 /// Which slice of the index a search covers.
 enum Scope: String, CaseIterable, Identifiable {
-    case all, you, claude, tools, memory, skills, prompts, snapshots
+    case all, you, claude, memory, skills, prompts, snapshots
 
     var id: String { rawValue }
 
@@ -13,7 +13,6 @@ enum Scope: String, CaseIterable, Identifiable {
         case .all: "Everything"
         case .you: "Your messages"
         case .claude: "Claude's messages"
-        case .tools: "Tool calls"
         case .memory: "Memory"
         case .skills: "Skills"
         case .prompts: "Prompt history"
@@ -25,7 +24,6 @@ enum Scope: String, CaseIterable, Identifiable {
         switch self {
         case .you: "user"
         case .claude: "assistant"
-        case .tools: "tool"
         default: nil
         }
     }
@@ -57,6 +55,7 @@ enum Marks {
 final class AppModel {
     var query = "" { didSet { scheduleSearch() } }
     var scope = Scope.all { didSet { scheduleSearch() } }
+    var sort = SearchSort.date { didSet { scheduleSearch() } }
     var hits: [Hit] = []
     var selection: Hit.ID? { didSet { loadDetail() } }
     var detail: Detail?
@@ -102,6 +101,7 @@ final class AppModel {
         options.limit = 200
         options.role = scope.role
         options.kind = scope.kind
+        options.sort = sort
         let request = options
         let path = databasePath
 
@@ -203,6 +203,11 @@ final class AppModel {
         Task {
             let counts = await Task.detached { try? Store.counts(db: Schema.open(path: path)) }.value
             guard let counts else { return }
+            // Empty after a schema change (or a first run that was cut short): rebuild from the chosen folder.
+            if counts.files == 0, folderPath != nil, !isIndexing {
+                reindex()
+                return
+            }
             let messages = counts.messages.reduce(0) { $0 + $1.count }
             let docs = counts.docs.reduce(0) { $0 + $1.count }
             var parts = [

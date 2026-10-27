@@ -6,14 +6,15 @@ let usage = """
 
     USAGE
       memwhole index <folder> [--full]
-      memwhole search <words...> [--limit N] [--project TEXT] [--role user|assistant|tool]
-                                 [--kind KIND] [--since DATE|7d] [--raw] [--json]
-      memwhole show <session-id-prefix> [--sidechain] [--no-tools]
+      memwhole search <words...> [--limit N] [--project TEXT] [--role user|assistant]
+                                 [--kind KIND] [--since DATE|7d] [--sort date|relevance] [--raw] [--json]
+      memwhole show <session-id-prefix> [--sidechain]
       memwhole stats
 
     OPTIONS
       --db PATH     Index file (default: $MEMWHOLE_DB or ~/Library/Application Support/MemWhole/index.sqlite)
       --full        Rebuild the index from scratch
+      --sort        date (newest first, the default) or relevance
       --raw         Pass the query to SQLite FTS5 as written (AND, OR, NOT, "phrases", prefix*)
       --kind        memory, skill, task, prompt, snapshot, rules, config, plugin-doc, plugin-manifest, changelog
 
@@ -24,7 +25,7 @@ struct Arguments {
     var options: [String: String] = [:]
     var flags: Set<String> = []
 
-    static let flagNames: Set<String> = ["full", "raw", "json", "sidechain", "no-tools", "help"]
+    static let flagNames: Set<String> = ["full", "raw", "json", "sidechain", "help"]
 
     init(_ args: some Sequence<String>) throws {
         var iterator = args.makeIterator()
@@ -94,6 +95,10 @@ func runSearch(_ args: Arguments) throws {
     options.query = args.positionals.joined(separator: " ")
     guard !options.query.isBlank else { throw CLIError("search needs some words") }
     options.raw = args.flags.contains("raw")
+    if let sort = args.options["sort"] {
+        guard let value = SearchSort(rawValue: sort) else { throw CLIError("--sort must be date or relevance") }
+        options.sort = value
+    }
     options.project = args.options["project"]
     options.kind = args.options["kind"]
     if let limit = args.options["limit"] {
@@ -104,8 +109,7 @@ func runSearch(_ args: Arguments) throws {
         switch role {
         case "user", "you": options.role = "user"
         case "assistant", "claude": options.role = "assistant"
-        case "tool": options.role = "tool"
-        default: throw CLIError("--role must be user, assistant or tool")
+        default: throw CLIError("--role must be user or assistant")
         }
     }
     if let since = args.options["since"] { options.since = try parseSince(since) }
@@ -139,8 +143,7 @@ func render(_ hit: Hit, style: Style) -> String {
     let label: String
     switch (hit.type, hit.role) {
     case ("message", "user"): label = style.cyan("you")
-    case ("message", "assistant"): label = style.magenta("claude")
-    case ("message", _): label = style.dim("tool")
+    case ("message", _): label = style.magenta("claude")
     default: label = style.yellow(hit.role)
     }
 
@@ -189,13 +192,10 @@ func runShow(_ args: Arguments) throws {
     print(style.dim(details.joined(separator: "  ·  ")))
     print()
 
-    let includeTools = !args.flags.contains("no-tools")
     let messages = try Store.messages(db: db, sessionID: session.id, includeSidechain: args.flags.contains("sidechain"))
     for message in messages {
         let agent = message.sidechain ? style.dim(" (agent)") : ""
         switch message.role {
-        case "tool":
-            if includeTools { print(style.dim("  → \(Format.path(message.text))") + agent) }
         case "user":
             print("\n" + style.cyan("you") + agent + style.dim("  \(Format.date(message.ts))"))
             print(message.text)
