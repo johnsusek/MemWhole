@@ -235,6 +235,9 @@ final class AppModel {
 
     // MARK: - Trash
 
+    /// Notes just trashed whose rows are still playing the forget effect.
+    var forgetting: [Hit] = []
+
     var canTrashSelection: Bool { selection != nil && folderPath != nil && !isIndexing }
 
     /// Moves the selected note to the Trash, drops its MEMORY.md pointer, and selects a neighbor.
@@ -251,10 +254,21 @@ final class AppModel {
             alert.runModal()
             return
         }
-        hits.remove(at: row)
-        total = total.map { max($0 - 1, 0) }
-        selection = hits.isEmpty ? nil : hits[min(row, hits.count - 1)].id
-        reindex()
+        // The row's ghost blurs and crumbles to dust (see ForgetEffect) while the real row is hidden;
+        // once the ghost has started to crumble, the rows below close the gap.
+        let next = row + 1 < hits.count ? hits[row + 1].id : row > 0 ? hits[row - 1].id : nil
+        selection = next
+        forgetting.append(hit)
+        Task {
+            try? await Task.sleep(for: ForgetEffect.gapDelay)
+            withAnimation(.easeInOut(duration: 0.3)) {
+                hits.removeAll { $0.id == hit.id }
+                total = total.map { max($0 - 1, 0) }
+            }
+            reindex()
+            try? await Task.sleep(for: ForgetEffect.duration - ForgetEffect.gapDelay)
+            forgetting.removeAll { $0.id == hit.id }
+        }
     }
 
     // MARK: - Files and pasteboard

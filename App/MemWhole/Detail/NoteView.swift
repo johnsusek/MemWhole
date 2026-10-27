@@ -67,6 +67,11 @@ struct NoteView: View {
                 .disabled(fileURL == nil)
                 .help("Show this file in Finder")
             }
+            ToolbarItem {
+                Button("Move to Trash", systemImage: "trash") { model.trashSelection() }
+                    .disabled(!model.canTrashSelection)
+                    .help("Move this note to the Trash (⌘⌫)")
+            }
         }
     }
 
