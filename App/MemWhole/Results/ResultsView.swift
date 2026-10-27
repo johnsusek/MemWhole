@@ -43,9 +43,10 @@ struct ResultsView: View {
     }
 
     private var subtitle: String {
-        guard !model.query.isBlank else { return "" }
-        let count = model.hits.count.formatted() + (model.hasMore ? "+" : "")
-        return model.hits.count == 1 ? "1 result" : "\(count) results"
+        let count = model.count(for: model.scope)
+        guard model.searchCounts != nil else { return "" }
+        let noun = model.query.isBlank ? "item" : "result"
+        return count == 1 ? "1 \(noun)" : "\(count.formatted()) \(noun)s"
     }
 
     @ViewBuilder
@@ -61,11 +62,13 @@ struct ResultsView: View {
             }
         } else if let error = model.errorMessage {
             ContentUnavailableView("Something Went Wrong", systemImage: "exclamationmark.triangle", description: Text(error))
-        } else if model.query.isBlank {
-            ContentUnavailableView("Search Your History", systemImage: "magnifyingglass",
-                                   description: Text("Press ⌘F to search \(model.scope.title.lowercased())."))
-        } else if model.hits.isEmpty {
-            ContentUnavailableView.search(text: model.query)
+        } else if model.hits.isEmpty, model.searchCounts != nil, model.count(for: model.scope) == 0 {
+            if model.query.isBlank {
+                ContentUnavailableView("No \(model.scope.title)", systemImage: model.scope.systemImage,
+                                       description: Text("Nothing in the index yet."))
+            } else {
+                ContentUnavailableView.search(text: model.query)
+            }
         }
     }
 

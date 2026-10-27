@@ -72,6 +72,8 @@ public enum Search {
     static let sidechainWeight = 0.5
     static let lowKindWeight = 0.5
     static let lowKinds = ["prompt", "snapshot", "plugin-doc", "plugin-manifest", "changelog"]
+    /// Characters of text shown for a result when listing without a query.
+    static let previewLength = 400
 
     /// Quotes each word so punctuation can't break FTS5 syntax. The last word matches as a prefix.
     public static func ftsQuery(_ text: String) -> String {
@@ -88,9 +90,10 @@ public enum Search {
         options.raw ? options.query : ftsQuery(options.query)
     }
 
+    /// Searches for the options' query, or lists everything the other options allow when the query is blank.
     public static func run(db: Database, options: SearchOptions, marks: (open: String, close: String)) throws -> [Hit] {
         let match = match(options)
-        guard !match.isEmpty else { return [] }
+        let browsing = match.isEmpty
 
         var prefix = ""
         var selects: [String] = []
@@ -98,7 +101,9 @@ public enum Search {
 
         if options.kind == nil {
             let (filter, filterParams) = messageFilter(options, match: match)
-            let score = "bm25(messages_fts) * CASE WHEN m.is_sidechain THEN \(sidechainWeight) ELSE 1.0 END"
+            let source = browsing ? "messages m" : "messages_fts JOIN messages m ON m.id = messages_fts.rowid"
+            let score = browsing
+                ? "0.0" : "bm25(messages_fts) * CASE WHEN m.is_sidechain THEN \(sidechainWeight) ELSE 1.0 END"
             let title = "COALESCE(s.custom_title, s.ai_title, s.first_prompt)"
 
             if options.groupByFile {
@@ -108,17 +113,19 @@ public enum Search {
                 prefix = """
                     WITH matched AS MATERIALIZED (
                         SELECT m.id, m.file_id, m.session_id, m.role, m.ts, m.is_sidechain, \(score) AS score
-                        FROM messages_fts
-                        JOIN messages m ON m.id = messages_fts.rowid
+                        FROM \(source)
                         LEFT JOIN sessions s ON s.id = m.session_id
                         WHERE \(filter)
                     )
 
                     """
                 params += filterParams
+                // Listing every transcript has no matches to count; each row stands for its whole file.
+                let snippet = browsing ? "(SELECT substr(text, 1, \(previewLength)) FROM messages WHERE id = g.id)" : "NULL"
+                let matches = browsing ? "1" : "g.n"
                 selects.append("""
                     SELECT 'message', g.id, g.session_id, g.role, g.ts, s.project, \(title), NULL, g.is_sidechain,
-                           NULL, g.score, g.file_id, g.n
+                           \(snippet), g.score, g.file_id, \(matches)
                     FROM (SELECT *, COUNT(*) OVER (PARTITION BY file_id) AS n,
                                  ROW_NUMBER() OVER (PARTITION BY file_id ORDER BY \(pick)) AS rn
                           FROM matched) g
@@ -126,33 +133,34 @@ public enum Search {
                     WHERE g.rn = 1
                     """)
             } else {
+                let snippet = browsing ? "substr(m.text, 1, \(previewLength))" : "snippet(messages_fts, 0, ?, ?, '…', 24)"
                 selects.append("""
                     SELECT 'message', m.id, m.session_id, m.role, m.ts, s.project, \(title), NULL, m.is_sidechain,
-                           snippet(messages_fts, 0, ?, ?, '…', 24), \(score), m.file_id, 1
-                    FROM messages_fts
-                    JOIN messages m ON m.id = messages_fts.rowid
+                           \(snippet), \(score), m.file_id, 1
+                    FROM \(source)
                     LEFT JOIN sessions s ON s.id = m.session_id
                     WHERE \(filter)
                     """)
-                params += [marks.open, marks.close] + filterParams
+                params += (browsing ? [] : [marks.open, marks.close]) + filterParams
             }
         }
 
         if options.role == nil, !options.messagesOnly {
             let lowKinds = lowKinds.map { "'\($0)'" }.joined(separator: ", ")
             let (filter, filterParams) = docFilter(options, match: match)
+            let source = browsing ? "docs d" : "docs_fts JOIN docs d ON d.id = docs_fts.rowid"
+            let snippet = browsing ? "substr(d.body, 1, \(previewLength))" : "snippet(docs_fts, -1, ?, ?, '…', 24)"
+            let score = browsing
+                ? "0.0"
+                : "bm25(docs_fts, 4.0, 1.0) * CASE WHEN d.kind IN (\(lowKinds)) THEN \(lowKindWeight) ELSE 1.0 END"
             selects.append("""
                 SELECT 'doc', d.id, d.session_id, d.kind, d.ts, COALESCE(d.project, s.project),
-                       d.title, d.path, 0,
-                       snippet(docs_fts, -1, ?, ?, '…', 24),
-                       bm25(docs_fts, 4.0, 1.0) * CASE WHEN d.kind IN (\(lowKinds)) THEN \(lowKindWeight) ELSE 1.0 END,
-                       NULL, 1
-                FROM docs_fts
-                JOIN docs d ON d.id = docs_fts.rowid
+                       d.title, d.path, 0, \(snippet), \(score), NULL, 1
+                FROM \(source)
                 LEFT JOIN sessions s ON s.id = d.session_id
                 WHERE \(filter)
                 """)
-            params += [marks.open, marks.close] + filterParams
+            params += (browsing ? [] : [marks.open, marks.close]) + filterParams
         }
 
         let sql = prefix + selects.joined(separator: "\nUNION ALL\n")
@@ -182,7 +190,7 @@ public enum Search {
                 groupedByFile: options.groupByFile))
         }
 
-        if options.groupByFile {
+        if options.groupByFile, !browsing {
             let ids = hits.filter { $0.type == "message" }.map(\.rowID)
             let snippets = try messageSnippets(db: db, match: match, ids: ids, marks: marks)
             hits = hits.map { hit in
@@ -203,18 +211,18 @@ public enum Search {
         public init() {}
     }
 
-    /// Result counts for the options' query across messages and every doc kind, ignoring `kind` and `messagesOnly`
-    /// so each scope's total is known at once.
+    /// Result counts for the options' query (or for everything, when it's blank) across messages and every doc
+    /// kind, ignoring `kind` and `messagesOnly` so each scope's total is known at once.
     public static func counts(db: Database, options: SearchOptions) throws -> Counts {
         var counts = Counts()
         let match = match(options)
-        guard !match.isEmpty else { return counts }
+        let browsing = match.isEmpty
 
         let (messageFilter, messageParams) = messageFilter(options, match: match)
         let distinct = options.groupByFile ? "DISTINCT m.file_id" : "*"
         let messages = try db.prepare("""
-            SELECT COUNT(\(distinct)) FROM messages_fts
-            JOIN messages m ON m.id = messages_fts.rowid
+            SELECT COUNT(\(distinct))
+            FROM \(browsing ? "messages m" : "messages_fts JOIN messages m ON m.id = messages_fts.rowid")
             LEFT JOIN sessions s ON s.id = m.session_id
             WHERE \(messageFilter)
             """)
@@ -226,8 +234,8 @@ public enum Search {
         docOptions.kind = nil
         let (docFilter, docParams) = docFilter(docOptions, match: match)
         let docs = try db.prepare("""
-            SELECT d.kind, COUNT(*) FROM docs_fts
-            JOIN docs d ON d.id = docs_fts.rowid
+            SELECT d.kind, COUNT(*)
+            FROM \(browsing ? "docs d" : "docs_fts JOIN docs d ON d.id = docs_fts.rowid")
             LEFT JOIN sessions s ON s.id = d.session_id
             WHERE \(docFilter)
             GROUP BY 1
@@ -237,10 +245,11 @@ public enum Search {
         return counts
     }
 
-    /// WHERE clause and parameters for matching messages (`m`, joined to sessions `s`).
+    /// WHERE clause and parameters for messages (`m`, joined to sessions `s`), matching `match` unless it's empty.
     private static func messageFilter(_ options: SearchOptions, match: String) -> (String, [SQLBindable?]) {
-        var filter = "messages_fts MATCH ? AND \(Store.firstCopy)"
-        var params: [SQLBindable?] = [match]
+        var filter = Store.firstCopy
+        var params: [SQLBindable?] = []
+        if !match.isEmpty { filter = "messages_fts MATCH ? AND " + filter; params.append(match) }
         if let role = options.role { filter += " AND m.role = ?"; params.append(role) }
         if options.sidechainOnly { filter += " AND m.is_sidechain" }
         if let project = options.project { filter += " AND s.project LIKE ?"; params.append("%\(project)%") }
@@ -248,17 +257,18 @@ public enum Search {
         return (filter, params)
     }
 
-    /// WHERE clause and parameters for matching docs (`d`, joined to sessions `s`).
+    /// WHERE clause and parameters for docs (`d`, joined to sessions `s`), matching `match` unless it's empty.
     private static func docFilter(_ options: SearchOptions, match: String) -> (String, [SQLBindable?]) {
-        var filter = "docs_fts MATCH ?"
-        var params: [SQLBindable?] = [match]
-        if let kind = options.kind { filter += " AND d.kind = ?"; params.append(kind) }
+        var conditions: [String] = []
+        var params: [SQLBindable?] = []
+        if !match.isEmpty { conditions.append("docs_fts MATCH ?"); params.append(match) }
+        if let kind = options.kind { conditions.append("d.kind = ?"); params.append(kind) }
         if let project = options.project {
-            filter += " AND COALESCE(d.project, s.project) LIKE ?"
+            conditions.append("COALESCE(d.project, s.project) LIKE ?")
             params.append("%\(project)%")
         }
-        if let since = options.since { filter += " AND d.ts >= ?"; params.append(since) }
-        return (filter, params)
+        if let since = options.since { conditions.append("d.ts >= ?"); params.append(since) }
+        return (conditions.isEmpty ? "1" : conditions.joined(separator: " AND "), params)
     }
 
     private static func messageSnippets(db: Database, match: String, ids: [Int64],

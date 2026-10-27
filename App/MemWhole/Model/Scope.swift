@@ -38,17 +38,7 @@ enum Scope: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Indexed items this scope searches: subagent messages and/or docs.
-    func count(in counts: Store.Counts) -> Int {
-        let subagentMessages = counts.messages.filter(\.sidechain).reduce(0) { $0 + $1.count }
-        switch self {
-        case .all: return subagentMessages + counts.docs.reduce(0) { $0 + $1.count }
-        case .transcripts: return subagentMessages
-        default: return counts.docs.first { $0.kind == kind }?.count ?? 0
-        }
-    }
-
-    /// Results this scope shows for a search: matching transcripts and/or docs.
+    /// Results this scope lists for the current query (everything, when it's blank): transcripts and/or docs.
     func count(in counts: Search.Counts) -> Int {
         switch self {
         case .all: return counts.messages + counts.docs.values.reduce(0, +)

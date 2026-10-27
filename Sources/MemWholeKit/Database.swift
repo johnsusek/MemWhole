@@ -18,6 +18,8 @@ public final class Database {
             sqlite3_close(db)
             throw SQLiteError(description: "Cannot open \(path): \(message)")
         }
+        // Opening writes the schema version, so concurrent connections wait for each other instead of failing.
+        sqlite3_busy_timeout(db, 5000)
         handle = db
     }
 

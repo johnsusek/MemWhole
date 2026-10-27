@@ -6,7 +6,7 @@ import SwiftUI
 @MainActor
 @Observable
 final class AppModel {
-    var query = "" { didSet { scheduleSearch() } }
+    var query = "" { didSet { scheduleSearch(recount: true) } }
     var scope = Scope.all { didSet { scheduleSearch() } }
     var sort = SearchSort.date { didSet { scheduleSearch() } }
     var hits: [Hit] = []
@@ -23,7 +23,7 @@ final class AppModel {
     var progress = ""
     var status = ""
     var counts: Store.Counts?
-    /// Result counts for the current query, or nil when there's no search.
+    /// What each scope lists for the current query (everything, when it's blank).
     var searchCounts: Search.Counts?
     var errorMessage: String?
 
@@ -50,15 +50,17 @@ final class AppModel {
     }
 
     @ObservationIgnored private var searchTask: Task<Void, Never>?
+    /// Set when the query or index changes, until a search brings back fresh counts.
+    @ObservationIgnored private var countsAreStale = true
 
     init() {
         refreshStatus()
+        scheduleSearch(recount: true)
     }
 
-    /// The sidebar badge for a scope: its results for the current search, otherwise what it holds.
+    /// The sidebar badge for a scope: how many results it lists for the current query.
     func count(for scope: Scope) -> Int {
-        if let searchCounts { return scope.count(in: searchCounts) }
-        return counts.map { scope.count(in: $0) } ?? 0
+        searchCounts.map { scope.count(in: $0) } ?? 0
     }
 
     /// A checkmark binding for the View menu's scope items.
@@ -71,11 +73,14 @@ final class AppModel {
     /// Results fetched per page; more load as the list scrolls to the end.
     static let pageSize = 200
 
-    private func scheduleSearch() {
+    /// Fetches the first page for the current query and scope; a blank query lists everything in the scope.
+    /// Counts depend only on the query and the index, so scope and sort changes skip them.
+    private func scheduleSearch(recount: Bool = false) {
         searchTask?.cancel()
+        if recount { countsAreStale = true }
         hasMore = false
         isLoadingMore = false
-        guard !query.isBlank else {
+        guard hasIndex else {
             hits = []
             searchCounts = nil
             return
@@ -84,21 +89,22 @@ final class AppModel {
         searchTask = Task {
             try? await Task.sleep(for: .milliseconds(120))
             guard !Task.isCancelled else { return }
-            async let counts = fetchCounts(request)
-            let result = await fetch(request)
-            let searchCounts = await counts
+            let result = await fetch(request, counts: countsAreStale)
             guard !Task.isCancelled else { return }
             switch result {
-            case .success(let hits):
+            case .success(let (hits, counts)):
                 self.hits = hits
-                self.searchCounts = searchCounts
+                if let counts {
+                    searchCounts = counts
+                    countsAreStale = false
+                }
                 hasMore = hits.count == Self.pageSize
                 errorMessage = nil
                 // Grouped hits keep their id as the query changes; refresh the open file's highlights.
                 if let selection, hits.contains(where: { $0.id == selection }) { loadDetail() }
             case .failure(let error):
                 self.hits = []
-                self.searchCounts = nil
+                searchCounts = nil
                 errorMessage = "\(error)"
             }
         }
@@ -106,18 +112,18 @@ final class AppModel {
 
     /// Appends the next page of results for the current search.
     func loadMore() {
-        guard hasMore, !isLoadingMore, !query.isBlank else { return }
+        guard hasMore, !isLoadingMore else { return }
         isLoadingMore = true
         let request = searchOptions(offset: hits.count)
         let previous = searchTask
         searchTask = Task {
             await previous?.value
             guard !Task.isCancelled else { return }
-            let result = await fetch(request)
+            let result = await fetch(request, counts: false)
             guard !Task.isCancelled else { return }
             isLoadingMore = false
             switch result {
-            case .success(let page):
+            case .success(let (page, _)):
                 hits += page
                 hasMore = page.count == Self.pageSize
             case .failure(let error):
@@ -141,17 +147,15 @@ final class AppModel {
         return options
     }
 
-    private func fetch(_ request: SearchOptions) async -> Result<[Hit], Error> {
+    /// A page of results and, when asked, each scope's total, read over one connection.
+    private func fetch(_ request: SearchOptions, counts: Bool) async -> Result<([Hit], Search.Counts?), Error> {
         let path = databasePath
         return await Task.detached {
-            Result { try Search.run(db: Schema.open(path: path), options: request, marks: (Marks.open, Marks.close)) }
-        }.value
-    }
-
-    private func fetchCounts(_ request: SearchOptions) async -> Search.Counts? {
-        let path = databasePath
-        return await Task.detached {
-            try? Search.counts(db: Schema.open(path: path), options: request)
+            Result {
+                let db = try Schema.open(path: path)
+                let hits = try Search.run(db: db, options: request, marks: (Marks.open, Marks.close))
+                return (hits, counts ? try Search.counts(db: db, options: request) : nil)
+            }
         }.value
     }
 
@@ -228,7 +232,7 @@ final class AppModel {
             switch result {
             case .success(let stats):
                 refreshStatus(lastRun: "Indexed \(stats.indexed) changed files")
-                scheduleSearch()
+                scheduleSearch(recount: true)
             case .failure(let error):
                 errorMessage = "\(error)"
             }
