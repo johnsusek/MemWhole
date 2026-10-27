@@ -1,0 +1,6 @@
+.build/
+.swiftpm/
+*.sqlite
+*.sqlite-*
+# Sample copy of ~/.claude: holds transcripts and secrets
+/claude/
