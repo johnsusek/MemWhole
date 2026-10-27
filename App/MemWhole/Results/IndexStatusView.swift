@@ -1,7 +1,7 @@
 import MemWholeKit
 import SwiftUI
 
-/// Sidebar footer shown while indexing, with its progress.
+/// Results list footer shown while indexing, with its progress.
 struct IndexStatusView: View {
     @Environment(AppModel.self) private var model
 
@@ -17,6 +17,8 @@ struct IndexStatusView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
         .help(model.folderPath.map { "Indexing \(Format.path($0))" } ?? "No folder chosen")
         .accessibilityElement(children: .combine)
     }

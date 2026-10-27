@@ -1,22 +1,20 @@
 import MemWholeKit
 import SwiftUI
 
-struct DocView: View {
+struct NoteView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let doc: Store.Doc
+    let note: Store.Note
     /// Runs of body lines, split up so the view can scroll to a match. Only built when the body has matches.
     private let blocks: [(id: Int64, marked: String)]
     private let occurrences: [Occurrence]
     @State private var current = 0
 
-    /// Very large docs (the changelog) make a single Text view slow.
-    private static let displayLimit = 200_000
     private static let linesPerBlock = 40
 
-    init(doc: Store.Doc, markedBody: String?) {
-        self.doc = doc
-        let lines = markedBody.map { Self.truncated($0).split(separator: "\n", omittingEmptySubsequences: false) } ?? []
+    init(note: Store.Note, markedBody: String?) {
+        self.note = note
+        let lines = markedBody.map { $0.split(separator: "\n", omittingEmptySubsequences: false) } ?? []
         blocks = stride(from: 0, to: lines.count, by: Self.linesPerBlock).map { start in
             let end = Swift.min(start + Self.linesPerBlock, lines.count)
             return (Int64(start), lines[start..<end].joined(separator: "\n"))
@@ -29,7 +27,7 @@ struct DocView: View {
     }
 
     private var fileURL: URL? {
-        model.fileURL(forDocPath: doc.path, kind: doc.kind)
+        model.fileURL(forNotePath: note.path)
     }
 
     var body: some View {
@@ -39,7 +37,7 @@ struct DocView: View {
                     header
                     Divider()
                     if blocks.isEmpty {
-                        bodyText(Text(Self.truncated(doc.body)))
+                        bodyText(Text(note.body))
                     } else {
                         // No spacing, so the blocks read as one continuous text.
                         LazyVStack(alignment: .leading, spacing: 0) {
@@ -74,21 +72,18 @@ struct DocView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                KindBadge(kind: doc.kind)
-                Text(Format.date(doc.ts)).font(.caption).foregroundStyle(.secondary)
-            }
-            Text(doc.title ?? doc.path).font(.title2.weight(.semibold)).textSelection(.enabled)
-            if let project = doc.project {
+            Text(Format.date(note.ts)).font(.caption).foregroundStyle(.secondary)
+            Text(note.title ?? note.path).font(.title2.weight(.semibold)).textSelection(.enabled)
+            if let project = note.project {
                 Label(Format.path(project), systemImage: "folder").font(.caption).foregroundStyle(.secondary)
             }
-            Text(doc.path).font(.caption.monospaced()).foregroundStyle(.tertiary).textSelection(.enabled)
+            Text(note.path).font(.caption.monospaced()).foregroundStyle(.tertiary).textSelection(.enabled)
         }
     }
 
     private func bodyText(_ text: Text) -> some View {
         text
-            .font(isCode ? .body.monospaced() : .body)
+            .font(.body)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -103,11 +98,4 @@ struct DocView: View {
         }
     }
 
-    private static func truncated(_ body: String) -> String {
-        body.count > displayLimit ? String(body.prefix(displayLimit)) + "\n\n…" : body
-    }
-
-    private var isCode: Bool {
-        ["snapshot", "config", "plugin-manifest"].contains(doc.kind)
-    }
 }

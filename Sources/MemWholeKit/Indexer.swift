@@ -5,16 +5,15 @@ public struct IndexStats: Sendable {
     public var indexed = 0
     public var unchanged = 0
     public var removed = 0
-    public var messages = 0
-    public var docs = 0
 }
 
-/// Walks a source folder, matches files against its rules and writes rows for new or changed files.
+/// Walks `projects/*/memory/` under a `~/.claude`-style folder and writes rows for new or changed notes.
 public final class Indexer {
     private struct Entry {
         let url: URL
         let relativePath: String
-        let rule: Rule
+        /// The `projects/<dir>` folder name the note sits under.
+        let projectDir: String
         let size: Int64
         let mtime: Double
     }
@@ -23,35 +22,16 @@ public final class Indexer {
         let id: Int64
         let size: Int64
         let mtime: Double
-        let offset: Int64
-    }
-
-    /// Session fields collected while reading one transcript file, merged into `sessions` at the end.
-    private struct SessionInfo {
-        var project: String?
-        var customTitle: String?
-        var aiTitle: String?
-        var firstPrompt: String?
-        var branch: String?
-        var firstTS: String?
-        var lastTS: String?
-
-        mutating func note(_ ts: String?) {
-            guard let ts else { return }
-            if firstTS == nil || ts < firstTS! { firstTS = ts }
-            if lastTS == nil || ts > lastTS! { lastTS = ts }
-        }
     }
 
     private let db: Database
     private let root: URL
-    private let rules: RuleSet
     private var projectDirs: [String: String] = [:]
+    /// Folders already searched for a `cwd` this run without finding one.
+    private var unknownProjectDirs: Set<String> = []
     private var stats = IndexStats()
 
-    private let insertMessage: Statement
-    private let insertDoc: Statement
-    private let upsertSession: Statement
+    private let insertNote: Statement
     private let insertProjectDir: Statement
 
     private let isoFormatter: ISO8601DateFormatter = {
@@ -60,29 +40,11 @@ public final class Indexer {
         return formatter
     }()
 
-    public init(db: Database, root: URL, rules: RuleSet) throws {
+    public init(db: Database, root: URL) throws {
         self.db = db
         self.root = root
-        self.rules = rules
-        insertMessage = try db.prepare("""
-            INSERT INTO messages(file_id, session_id, role, ts, text, record_id, is_sidechain)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """)
-        insertDoc = try db.prepare("""
-            INSERT INTO docs(file_id, source, path, kind, title, body, project, session_id, ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """)
-        upsertSession = try db.prepare("""
-            INSERT INTO sessions(id, project, custom_title, ai_title, first_prompt, branch, first_ts, last_ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                project = COALESCE(sessions.project, excluded.project),
-                custom_title = COALESCE(excluded.custom_title, sessions.custom_title),
-                ai_title = COALESCE(excluded.ai_title, sessions.ai_title),
-                first_prompt = COALESCE(sessions.first_prompt, excluded.first_prompt),
-                branch = COALESCE(excluded.branch, sessions.branch),
-                first_ts = MIN(COALESCE(sessions.first_ts, excluded.first_ts), COALESCE(excluded.first_ts, sessions.first_ts)),
-                last_ts = MAX(COALESCE(sessions.last_ts, excluded.last_ts), COALESCE(excluded.last_ts, sessions.last_ts))
+        insertNote = try db.prepare("""
+            INSERT INTO notes(file_id, path, title, body, project, ts) VALUES (?, ?, ?, ?, ?, ?)
             """)
         insertProjectDir = try db.prepare("INSERT OR REPLACE INTO project_dirs(dir, project) VALUES (?, ?)")
 
@@ -99,11 +61,8 @@ public final class Indexer {
             for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: databasePath + suffix) }
         }
         let db = try Schema.open(path: databasePath)
-        let stats = try Indexer(db: db, root: folder, rules: .claude).run(progress: progress)
-        try db.exec("""
-            INSERT INTO messages_fts(messages_fts) VALUES ('optimize');
-            INSERT INTO docs_fts(docs_fts) VALUES ('optimize');
-            """)
+        let stats = try Indexer(db: db, root: folder).run(progress: progress)
+        try db.exec("INSERT INTO notes_fts(notes_fts) VALUES ('optimize')")
         return stats
     }
 
@@ -135,7 +94,6 @@ public final class Indexer {
             stats.indexed += 1
         }
 
-        // Files that are gone, or older snapshot versions that a newer one replaced.
         let seen = Set(entries.map(\.url.path))
         let rootPrefix = root.path + "/"
         let stale = known.filter { $0.key.hasPrefix(rootPrefix) && !seen.contains($0.key) }
@@ -150,58 +108,40 @@ public final class Indexer {
 
     // MARK: - Walk
 
+    /// Every `projects/*/memory/**/*.md` except the `MEMORY.md` index of pointers.
     private func walk() throws -> [Entry] {
-        let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
-        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys) else {
-            throw SQLiteError(description: "Cannot read \(root.path)")
-        }
+        let projects = root.appendingPathComponent("projects", isDirectory: true)
+        let fm = FileManager.default
+        guard let dirs = try? fm.contentsOfDirectory(atPath: projects.path) else { return [] }
+
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
         let rootPrefix = root.path + "/"
         var entries: [Entry] = []
-        // file-history/<session>/<hash> -> highest version seen
-        var snapshots: [String: (version: Int, entry: Entry)] = [:]
-
-        for case let url as URL in enumerator {
-            let path = url.path
-            guard path.hasPrefix(rootPrefix) else { continue }
-            let relativePath = String(path.dropFirst(rootPrefix.count))
-            let values = try url.resourceValues(forKeys: Set(keys))
-            if values.isDirectory == true {
-                if rules.prunes(directory: relativePath) { enumerator.skipDescendants() }
-                continue
-            }
-            guard values.isRegularFile == true,
-                  let rule = rules.rule(for: relativePath), rule.parser != .skip else { continue }
-            let entry = Entry(
-                url: url,
-                relativePath: relativePath,
-                rule: rule,
-                size: Int64(values.fileSize ?? 0),
-                mtime: values.contentModificationDate?.timeIntervalSince1970 ?? 0)
-
-            if rule.parser == .snapshot {
-                let parts = relativePath.split(separator: "@v", maxSplits: 1)
-                let key = String(parts[0])
-                let version = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
-                if version >= snapshots[key]?.version ?? -1 { snapshots[key] = (version, entry) }
-            } else {
-                entries.append(entry)
+        for dir in dirs.sorted() {
+            let memory = projects.appendingPathComponent(dir).appendingPathComponent("memory", isDirectory: true)
+            guard let enumerator = fm.enumerator(at: memory, includingPropertiesForKeys: keys) else { continue }
+            for case let url as URL in enumerator {
+                guard url.pathExtension == "md", url.lastPathComponent != "MEMORY.md",
+                      url.path.hasPrefix(rootPrefix) else { continue }
+                let values = try url.resourceValues(forKeys: Set(keys))
+                guard values.isRegularFile == true else { continue }
+                entries.append(Entry(
+                    url: url,
+                    relativePath: String(url.path.dropFirst(rootPrefix.count)),
+                    projectDir: dir,
+                    size: Int64(values.fileSize ?? 0),
+                    mtime: values.contentModificationDate?.timeIntervalSince1970 ?? 0))
             }
         }
-        entries += snapshots.values.map(\.entry)
-
-        // Transcripts first, so memory notes can look up their project from transcript `cwd`s.
-        return entries.sorted { a, b in
-            let aFirst = a.rule.parser == .transcript, bFirst = b.rule.parser == .transcript
-            return aFirst != bFirst ? aFirst : a.relativePath < b.relativePath
-        }
+        return entries.sorted { $0.relativePath < $1.relativePath }
     }
 
     private func knownFiles() throws -> [String: KnownFile] {
-        let stmt = try db.prepare("SELECT id, path, size, mtime, offset FROM files")
+        let stmt = try db.prepare("SELECT id, path, size, mtime FROM files")
         var files: [String: KnownFile] = [:]
         while try stmt.step() {
             guard let path = stmt.text(1) else { continue }
-            files[path] = KnownFile(id: stmt.int64(0), size: stmt.int64(2), mtime: stmt.double(3), offset: stmt.int64(4))
+            files[path] = KnownFile(id: stmt.int64(0), size: stmt.int64(2), mtime: stmt.double(3))
         }
         return files
     }
@@ -209,189 +149,101 @@ public final class Indexer {
     // MARK: - Per file
 
     private func index(_ entry: Entry, known: KnownFile?) throws {
-        let appendOnly = entry.rule.parser == .transcript || entry.rule.parser == .history
-        var startOffset: UInt64 = 0
         let fileID: Int64
-
         if let known {
             fileID = known.id
-            if appendOnly && entry.size >= known.offset {
-                startOffset = UInt64(known.offset)
-            } else {
-                try removeRows(fileID: fileID, dropFile: false)
-            }
+            try removeRows(fileID: fileID, dropFile: false)
         } else {
-            try db.prepare("INSERT INTO files(path, size, mtime, offset, parser) VALUES (?, 0, 0, 0, ?)")
-                .run(entry.url.path, entry.rule.parser.rawValue)
+            try db.prepare("INSERT INTO files(path, size, mtime) VALUES (?, 0, 0)").run(entry.url.path)
             fileID = db.lastInsertRowID
         }
 
-        let endOffset: UInt64
-        switch entry.rule.parser {
-        case .transcript: endOffset = try indexTranscript(entry, fileID: fileID, from: startOffset)
-        case .history: endOffset = try indexHistory(entry, fileID: fileID, from: startOffset)
-        case .markdown: endOffset = try indexMarkdown(entry, fileID: fileID)
-        case .json: endOffset = try indexJSON(entry, fileID: fileID)
-        case .snapshot: endOffset = try indexSnapshot(entry, fileID: fileID)
-        case .skip: endOffset = 0
+        if let text = readText(entry) {
+            let front = Self.frontmatter(text)
+            let heading = text.split(separator: "\n").first { $0.hasPrefix("# ") }.map { String($0.dropFirst(2)) }
+            let title = front["name"] ?? heading ?? entry.url.deletingPathExtension().lastPathComponent
+            let ts = isoFormatter.string(from: Date(timeIntervalSince1970: entry.mtime))
+            try insertNote.run(fileID, entry.relativePath, title, Secrets.maskText(text),
+                               try project(forDir: entry.projectDir), ts)
         }
 
-        try db.prepare("UPDATE files SET size = ?, mtime = ?, offset = ?, parser = ? WHERE id = ?")
-            .run(entry.size, entry.mtime, Int64(endOffset), entry.rule.parser.rawValue, fileID)
+        try db.prepare("UPDATE files SET size = ?, mtime = ? WHERE id = ?").run(entry.size, entry.mtime, fileID)
     }
 
     private func removeRows(fileID: Int64, dropFile: Bool) throws {
-        try db.prepare("DELETE FROM messages WHERE file_id = ?").run(fileID)
-        try db.prepare("DELETE FROM docs WHERE file_id = ?").run(fileID)
+        try db.prepare("DELETE FROM notes WHERE file_id = ?").run(fileID)
         if dropFile {
             try db.prepare("DELETE FROM files WHERE id = ?").run(fileID)
         }
     }
 
-    // MARK: - Transcripts
+    // MARK: - Projects
 
-    private func indexTranscript(_ entry: Entry, fileID: Int64, from offset: UInt64) throws -> UInt64 {
-        // projects/<flattened-dir>/...
-        let projectDir = entry.relativePath.split(separator: "/")[1]
-        var sessions: [String: SessionInfo] = [:]
+    /// The working directory a `projects/<dir>` folder stands for. Folder names flatten paths lossily
+    /// (`/` and `.` both become `-`), so read the first `cwd` from one of the folder's transcripts.
+    private func project(forDir dir: String) throws -> String? {
+        if let project = projectDirs[dir] { return project }
+        guard !unknownProjectDirs.contains(dir) else { return nil }
 
-        let end = try LineReader(path: entry.url.path, startOffset: offset).forEachLine { line in
-            guard let record = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                  let type = record["type"] as? String,
-                  let sessionID = record["sessionId"] as? String else { return }
-
-            switch type {
-            case "custom-title":
-                sessions[sessionID, default: SessionInfo()].customTitle = record["customTitle"] as? String
-            case "ai-title":
-                sessions[sessionID, default: SessionInfo()].aiTitle = record["aiTitle"] as? String
-            case "user", "assistant":
-                // Injected text such as skill bodies, not something either side wrote.
-                if record["isMeta"] as? Bool == true { return }
-                guard let message = record["message"] as? [String: Any] else { return }
-                let ts = record["timestamp"] as? String
-                let sidechain = entry.rule.sidechain || record["isSidechain"] as? Bool == true
-
-                var info = sessions[sessionID, default: SessionInfo()]
-                info.note(ts)
-                if let cwd = record["cwd"] as? String, info.project == nil {
-                    info.project = cwd
-                    if projectDirs[String(projectDir)] != cwd {
-                        projectDirs[String(projectDir)] = cwd
-                        try insertProjectDir.run(String(projectDir), cwd)
-                    }
-                }
-                if let branch = record["gitBranch"] as? String, !branch.isEmpty { info.branch = branch }
-
-                let uuid = record["uuid"] as? String
-                for (index, block) in Self.textBlocks(of: message).enumerated() {
-                    let text = Secrets.maskText(block)
-                    let recordID = uuid.map { "\($0)#\(index)" }
-                    try insertMessage.run(fileID, sessionID, type, ts, text, recordID, sidechain)
-                    stats.messages += 1
-                    if type == "user", !sidechain, info.firstPrompt == nil {
-                        info.firstPrompt = Self.titleLine(text)
-                    }
-                }
-                sessions[sessionID] = info
-            default:
-                return
+        let folder = root.appendingPathComponent("projects").appendingPathComponent(dir)
+        let transcripts = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
+            .filter { $0.hasSuffix(".jsonl") }
+            .sorted()
+        for name in transcripts {
+            if let cwd = Self.firstCWD(in: folder.appendingPathComponent(name)) {
+                projectDirs[dir] = cwd
+                try insertProjectDir.run(dir, cwd)
+                return cwd
             }
         }
-
-        for (id, info) in sessions {
-            try upsertSession.run(
-                id, info.project, info.customTitle, info.aiTitle, info.firstPrompt, info.branch,
-                info.firstTS, info.lastTS)
+        if let path = Self.existingPath(flattened: dir) {
+            projectDirs[dir] = path
+            try insertProjectDir.run(dir, path)
+            return path
         }
-        return end
+        unknownProjectDirs.insert(dir)
+        return nil
     }
 
-    /// The text a user or assistant wrote. Tool calls, tool results, thinking and images are left out.
-    private static func textBlocks(of message: [String: Any]) -> [String] {
-        if let text = message["content"] as? String {
-            return text.isBlank ? [] : [text]
+    /// A directory on disk whose flattened form (`/` and `.` as `-`) is `flattened`, for folders with no
+    /// transcript to read a `cwd` from. Walks down from `/`, only into children that keep the name matching.
+    static func existingPath(flattened: String, under parent: String = "/") -> String? {
+        let fm = FileManager.default
+        guard flattened.hasPrefix("-"),
+              let children = try? fm.contentsOfDirectory(atPath: parent) else { return nil }
+        let rest = flattened.dropFirst()
+        for child in children.sorted(by: { $0.count > $1.count }) {
+            let flat = child.replacingOccurrences(of: ".", with: "-")
+            guard rest.hasPrefix(flat) else { continue }
+            let path = (parent as NSString).appendingPathComponent(child)
+            var isDirectory: ObjCBool = false
+            guard fm.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else { continue }
+            let remainder = String(rest.dropFirst(flat.count))
+            if remainder.isEmpty { return path }
+            if let found = existingPath(flattened: remainder, under: path) { return found }
         }
-        guard let content = message["content"] as? [[String: Any]] else { return [] }
-        return content.compactMap { block in
-            guard block["type"] as? String == "text", let text = block["text"] as? String, !text.isBlank else {
-                return nil
-            }
-            return text
+        return nil
+    }
+
+    /// The first `cwd` field among a transcript's opening records.
+    private static func firstCWD(in url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 256 << 10) else { return nil }
+        for line in data.split(separator: 0x0A) {
+            guard let record = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
+            if let cwd = record["cwd"] as? String, !cwd.isEmpty { return cwd }
         }
+        return nil
     }
 
-    // MARK: - Other sources
-
-    private func indexHistory(_ entry: Entry, fileID: Int64, from offset: UInt64) throws -> UInt64 {
-        try LineReader(path: entry.url.path, startOffset: offset).forEachLine { line in
-            guard let record = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                  let display = record["display"] as? String, !display.isBlank else { return }
-            let ts = (record["timestamp"] as? Double).map { isoFormatter.string(from: Date(timeIntervalSince1970: $0 / 1000)) }
-            try addDoc(entry, fileID: fileID, title: nil, body: Secrets.maskText(display),
-                       project: record["project"] as? String, sessionID: record["sessionId"] as? String, ts: ts)
-        }
-    }
-
-    private func indexMarkdown(_ entry: Entry, fileID: Int64) throws -> UInt64 {
-        guard let text = readText(entry) else { return 0 }
-        let front = Self.frontmatter(text)
-        let heading = text.split(separator: "\n").first { $0.hasPrefix("# ") }.map { String($0.dropFirst(2)) }
-        let title = front["name"] ?? heading ?? entry.url.deletingPathExtension().lastPathComponent
-
-        var project: String?
-        if entry.rule.kind == "memory" {
-            project = projectDirs[String(entry.relativePath.split(separator: "/")[1])]
-        }
-        try addDoc(entry, fileID: fileID, title: title, body: Secrets.maskText(text), project: project)
-        return UInt64(entry.size)
-    }
-
-    private func indexJSON(_ entry: Entry, fileID: Int64) throws -> UInt64 {
-        guard let data = try? Data(contentsOf: entry.url) else { return 0 }
-        var title = entry.url.lastPathComponent
-        let body: String
-        if let object = try? JSONSerialization.jsonObject(with: data) {
-            if let name = (object as? [String: Any])?["name"] as? String { title = name }
-            let masked = Secrets.maskJSON(object)
-            let pretty = try JSONSerialization.data(withJSONObject: masked, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-            body = String(decoding: pretty, as: UTF8.self)
-        } else {
-            body = Secrets.maskText(String(decoding: data, as: UTF8.self))
-        }
-        try addDoc(entry, fileID: fileID, title: title, body: body)
-        return UInt64(entry.size)
-    }
-
-    private func indexSnapshot(_ entry: Entry, fileID: Int64) throws -> UInt64 {
-        guard let text = readText(entry) else { return 0 }
-        // file-history/<session>/<hash>@vN. The original path is not recorded, so use the first line as title.
-        let sessionID = String(entry.relativePath.split(separator: "/")[1])
-        let title = text.split(separator: "\n").first { !$0.isBlank }.map { Self.titleLine(String($0)) }
-        try addDoc(entry, fileID: fileID, title: title, body: Secrets.maskText(text), sessionID: sessionID)
-        return UInt64(entry.size)
-    }
-
-    private func addDoc(_ entry: Entry, fileID: Int64, title: String?, body: String,
-                        project: String? = nil, sessionID: String? = nil, ts: String? = nil) throws {
-        let ts = ts ?? isoFormatter.string(from: Date(timeIntervalSince1970: entry.mtime))
-        try insertDoc.run(fileID, rules.source, entry.relativePath, entry.rule.kind, title, body, project, sessionID, ts)
-        stats.docs += 1
-    }
+    // MARK: - Text helpers
 
     /// UTF-8 text up to 2 MB. Binary files return nil.
     private func readText(_ entry: Entry) -> String? {
         guard entry.size <= 2 << 20, let data = try? Data(contentsOf: entry.url),
               !data.contains(0), let text = String(data: data, encoding: .utf8) else { return nil }
         return text
-    }
-
-    // MARK: - Text helpers
-
-    static func titleLine(_ text: String) -> String {
-        let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        return trimmed.count > 100 ? String(trimmed.prefix(100)) + "…" : trimmed
     }
 
     /// `key: value` pairs from a leading `---` block.

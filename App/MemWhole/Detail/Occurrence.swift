@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// One match in the open file: the block it sits in (a message, or a run of doc lines) and its order there.
+/// One match in the open note: the run of lines it sits in and its order there.
 struct Occurrence: Equatable {
     let block: Int64
     let ordinal: Int

@@ -17,5 +17,9 @@ let package = Package(
             name: "memwhole",
             dependencies: ["MemWholeKit"]
         ),
+        .testTarget(
+            name: "MemWholeKitTests",
+            dependencies: ["MemWholeKit"]
+        ),
     ]
 )

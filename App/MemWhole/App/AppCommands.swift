@@ -28,11 +28,6 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(before: .sidebar) {
-            ForEach(Array(Scope.allCases.enumerated()), id: \.element) { index, scope in
-                Toggle(scope.title, isOn: model.isShowing(scope))
-                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")))
-            }
-            Divider()
             Picker("Sort Results By", selection: $model.sort) {
                 Text("Newest First").tag(SearchSort.date)
                 Text("Best Match").tag(SearchSort.relevance)

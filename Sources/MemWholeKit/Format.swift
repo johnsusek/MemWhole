@@ -34,10 +34,6 @@ public enum Format {
         text.split(whereSeparator: \.isNewline).joined(separator: " ")
     }
 
-    public static func shortID(_ id: String?) -> String {
-        id.map { String($0.prefix(8)) } ?? ""
-    }
-
     public static func bytes(_ count: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
     }

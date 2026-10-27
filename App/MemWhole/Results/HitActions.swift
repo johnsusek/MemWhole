@@ -10,13 +10,8 @@ struct HitActions: View {
         if let title = hit.title, !title.isBlank {
             Button("Copy Title") { model.copy(Format.oneLine(title)) }
         }
-        if let sessionID = hit.sessionID {
-            Button("Copy Session ID") { model.copy(sessionID) }
-        }
-        if let path = hit.path {
-            Button("Copy Path") { model.copy(path) }
-        }
-        if hit.type == "doc", let url = model.fileURL(forDocPath: hit.path, kind: hit.role) {
+        Button("Copy Path") { model.copy(hit.path) }
+        if let url = model.fileURL(forNotePath: hit.path) {
             Divider()
             Button("Show in Finder") { model.reveal(url) }
         }

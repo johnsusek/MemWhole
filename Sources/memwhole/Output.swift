@@ -12,9 +12,6 @@ struct Style {
 
     func bold(_ text: String) -> String { wrap(text, "1") }
     func dim(_ text: String) -> String { wrap(text, "2") }
-    func cyan(_ text: String) -> String { wrap(text, "36") }
-    func yellow(_ text: String) -> String { wrap(text, "33") }
-    func magenta(_ text: String) -> String { wrap(text, "35") }
 
     /// Highlight markers passed to FTS5 `snippet()`.
     var marks: (open: String, close: String) {

@@ -6,16 +6,10 @@ struct HitRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                KindBadge(kind: hit.type == "doc" ? hit.role : hit.sidechain ? "subagent" : "session")
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(Format.oneLine(hit.title ?? hit.path)).font(.headline).lineLimit(1)
                 Spacer()
-                if hit.matches > 1 {
-                    Text("\(hit.matches) matches").font(.caption).foregroundStyle(.secondary)
-                }
                 Text(Format.date(hit.ts)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
-            }
-            if let title = hit.title, !title.isBlank {
-                Text(Format.oneLine(title)).font(.headline).lineLimit(1)
             }
             Text(highlighted(Format.oneLine(hit.snippet)))
                 .font(.callout)

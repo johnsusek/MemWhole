@@ -4,16 +4,12 @@ struct DetailView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        switch model.detail {
-        case .session(let session, let messages, let focus, let marked):
-            SessionView(session: session, messages: messages, focus: focus, marked: marked)
+        if let note = model.note {
+            NoteView(note: note, markedBody: model.markedBody)
                 .id(model.detailKey)
-        case .doc(let doc, let markedBody):
-            DocView(doc: doc, markedBody: markedBody)
-                .id(model.detailKey)
-        case nil:
+        } else {
             ContentUnavailableView("No Selection", systemImage: "text.magnifyingglass",
-                                   description: Text("Pick a result to read it in full."))
+                                   description: Text("Pick a note to read it in full."))
         }
     }
 }

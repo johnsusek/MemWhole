@@ -7,14 +7,15 @@ import SwiftUI
 @Observable
 final class AppModel {
     var query = "" { didSet { scheduleSearch(recount: true) } }
-    var scope = Scope.all { didSet { scheduleSearch() } }
     var sort = SearchSort.date { didSet { scheduleSearch() } }
     var hits: [Hit] = []
     var hasMore = false
     var isLoadingMore = false
     var selection: Hit.ID? { didSet { loadDetail() } }
-    var detail: Detail?
-    /// Changes whenever a new detail loads, so its view (and its place among the matches) starts over.
+    var note: Store.Note?
+    /// The open note's body with matches between `Marks`, or nil when the body has none.
+    var markedBody: String?
+    /// Changes whenever a new note loads, so its view (and its place among the matches) starts over.
     var detailKey = ""
     /// Set by Find… (⌘F) to move focus to the search field.
     var isSearchFocused = false
@@ -22,9 +23,8 @@ final class AppModel {
     var isIndexing = false
     var progress = ""
     var status = ""
-    var counts: Store.Counts?
-    /// What each scope lists for the current query (everything, when it's blank).
-    var searchCounts: Search.Counts?
+    /// Notes the current query finds (every note, when it's blank), or nil before the first search.
+    var total: Int?
     var errorMessage: String?
 
     let databasePath = Store.defaultDatabasePath
@@ -43,12 +43,6 @@ final class AppModel {
 
     var hasIndex: Bool { FileManager.default.fileExists(atPath: databasePath) }
 
-    /// The sidebar's selection. A source list allows none, but a scope always applies.
-    var scopeSelection: Scope? {
-        get { scope }
-        set { if let newValue { scope = newValue } }
-    }
-
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     /// Set when the query or index changes, until a search brings back fresh counts.
     @ObservationIgnored private var countsAreStale = true
@@ -58,23 +52,13 @@ final class AppModel {
         scheduleSearch(recount: true)
     }
 
-    /// The sidebar badge for a scope: how many results it lists for the current query.
-    func count(for scope: Scope) -> Int {
-        searchCounts.map { scope.count(in: $0) } ?? 0
-    }
-
-    /// A checkmark binding for the View menu's scope items.
-    func isShowing(_ scope: Scope) -> Binding<Bool> {
-        Binding { self.scope == scope } set: { if $0 { self.scope = scope } }
-    }
-
     // MARK: - Search
 
     /// Results fetched per page; more load as the list scrolls to the end.
     static let pageSize = 200
 
-    /// Fetches the first page for the current query and scope; a blank query lists everything in the scope.
-    /// Counts depend only on the query and the index, so scope and sort changes skip them.
+    /// Fetches the first page for the current query; a blank query lists every note.
+    /// The total depends only on the query and the index, so sort changes skip it.
     private func scheduleSearch(recount: Bool = false) {
         searchTask?.cancel()
         if recount { countsAreStale = true }
@@ -82,7 +66,7 @@ final class AppModel {
         isLoadingMore = false
         guard hasIndex else {
             hits = []
-            searchCounts = nil
+            total = nil
             return
         }
         let request = searchOptions(offset: 0)
@@ -92,19 +76,19 @@ final class AppModel {
             let result = await fetch(request, counts: countsAreStale)
             guard !Task.isCancelled else { return }
             switch result {
-            case .success(let (hits, counts)):
+            case .success(let (hits, total)):
                 self.hits = hits
-                if let counts {
-                    searchCounts = counts
+                if let total {
+                    self.total = total
                     countsAreStale = false
                 }
                 hasMore = hits.count == Self.pageSize
                 errorMessage = nil
-                // Grouped hits keep their id as the query changes; refresh the open file's highlights.
+                // A note keeps its id as the query changes; refresh the open note's highlights.
                 if let selection, hits.contains(where: { $0.id == selection }) { loadDetail() }
             case .failure(let error):
                 self.hits = []
-                searchCounts = nil
+                total = nil
                 errorMessage = "\(error)"
             }
         }
@@ -138,30 +122,26 @@ final class AppModel {
         options.query = query
         options.limit = Self.pageSize
         options.offset = offset
-        options.kind = scope.kind
-        options.messagesOnly = scope == .transcripts
-        // The Claude app already shows main conversations; only subagent transcripts are hidden.
-        options.sidechainOnly = true
-        options.groupByFile = true
         options.sort = sort
         return options
     }
 
-    /// A page of results and, when asked, each scope's total, read over one connection.
-    private func fetch(_ request: SearchOptions, counts: Bool) async -> Result<([Hit], Search.Counts?), Error> {
+    /// A page of results and, when asked, the total, read over one connection.
+    private func fetch(_ request: SearchOptions, counts: Bool) async -> Result<([Hit], Int?), Error> {
         let path = databasePath
         return await Task.detached {
             Result {
                 let db = try Schema.open(path: path)
                 let hits = try Search.run(db: db, options: request, marks: (Marks.open, Marks.close))
-                return (hits, counts ? try Search.counts(db: db, options: request) : nil)
+                return (hits, counts ? try Search.count(db: db, options: request) : nil)
             }
         }.value
     }
 
     private func loadDetail() {
-        guard let id = selection, let hit = hits.first(where: { $0.id == id }) else {
-            detail = nil
+        guard let id = selection else {
+            note = nil
+            markedBody = nil
             return
         }
         let path = databasePath
@@ -169,24 +149,15 @@ final class AppModel {
         let marks = (Marks.open, Marks.close)
         let key = "\(id)|\(match)"
         Task {
-            let loaded: Detail? = await Task.detached {
-                let db = try? Schema.open(path: path)
-                guard let db else { return nil }
-                if hit.type == "doc" {
-                    guard let doc = try? Store.doc(db: db, id: hit.rowID) else { return nil }
-                    let body = try? Search.markedBody(db: db, match: match, docID: doc.id, marks: marks)
-                    return .doc(doc, markedBody: body ?? nil)
-                }
-                guard let sessionID = hit.sessionID, let fileID = hit.fileID,
-                      let session = try? Store.sessions(db: db, idPrefix: sessionID).first,
-                      let messages = try? Store.messages(db: db, fileID: fileID)
-                else { return nil }
-                let marked = (try? Search.markedMessages(db: db, match: match, fileID: fileID, marks: marks)) ?? [:]
-                return .session(session, messages, focus: hit.rowID, marked: marked)
+            let loaded: (Store.Note, String?)? = await Task.detached {
+                guard let db = try? Schema.open(path: path), let note = try? Store.note(db: db, id: id) else { return nil }
+                let body = try? Search.markedBody(db: db, match: match, noteID: id, marks: marks)
+                return (note, body ?? nil)
             }.value
             // Ignore a slow load that finished after the selection moved on.
             if selection == id {
-                detail = loaded
+                note = loaded?.0
+                markedBody = loaded?.1
                 detailKey = key
             }
         }
@@ -253,13 +224,9 @@ final class AppModel {
                 reindex()
                 return
             }
-            self.counts = counts
-            let messages = counts.messages.reduce(0) { $0 + $1.count }
-            let docs = counts.docs.reduce(0) { $0 + $1.count }
             var parts = [
-                "\(counts.sessions.formatted()) sessions",
-                "\(messages.formatted()) messages",
-                "\(docs.formatted()) docs",
+                "\(counts.notes.formatted()) notes",
+                "\(counts.projects.formatted()) projects",
             ]
             if let lastRun { parts.append(lastRun) }
             status = parts.joined(separator: " · ")
@@ -268,9 +235,9 @@ final class AppModel {
 
     // MARK: - Files and pasteboard
 
-    /// The file a doc path (relative to the indexed folder) points at, when there is one on disk.
-    func fileURL(forDocPath path: String?, kind: String?) -> URL? {
-        guard let folderPath, let path, kind != "prompt" else { return nil }
+    /// The file a note path (relative to the indexed folder) points at.
+    func fileURL(forNotePath path: String) -> URL? {
+        guard let folderPath else { return nil }
         return URL(fileURLWithPath: folderPath).appendingPathComponent(path)
     }
 

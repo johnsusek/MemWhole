@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Source list of scopes, the results for the current search, and the selected result in full.
+/// The notes the current search finds, and the selected note in full.
 struct ContentView: View {
     @Environment(AppModel.self) private var model
     @FocusState private var isSearchFocused: Bool
@@ -9,13 +9,11 @@ struct ContentView: View {
         @Bindable var model = model
 
         NavigationSplitView {
-            SidebarView()
-        } content: {
             ResultsView()
         } detail: {
             DetailView()
         }
-        .searchable(text: $model.query, placement: .toolbar, prompt: "Search sessions, memory, skills")
+        .searchable(text: $model.query, placement: .toolbar, prompt: "Search memories")
         .searchFocusedIfAvailable($isSearchFocused)
         .onChange(of: model.isSearchFocused) { _, focused in
             isSearchFocused = focused

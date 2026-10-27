@@ -1,13 +1,13 @@
 # memwhole
 
-Local keyword search over `~/.claude`-style folders: session transcripts, typed prompts, memory notes, skills, file snapshots and config. See `HANDOFF.md` for what gets indexed and why.
+Local keyword search over Claude's memory notes: `projects/*/memory/**/*.md` under a `~/.claude`-style folder. See `SPEC.md` for the behavior and `HANDOFF.md` for background.
 
 ```bash
 swift build -c release
-.build/release/memwhole index ./claude            # incremental; --full rebuilds
-.build/release/memwhole search liquid war --role user
-.build/release/memwhole show 8b401cde             # read a session from a search hit
+.build/release/memwhole index ~/.claude           # incremental; --full rebuilds
+.build/release/memwhole search release build --project MemWhole
 .build/release/memwhole stats
+swift test
 ```
 
 ## macOS app
@@ -19,26 +19,27 @@ xcodegen --spec App/project.yml
 open App/MemWhole.xcodeproj
 ```
 
-Use **File › Index Folder…** (⌘O) to pick `~/.claude` or a copy, then type in the sidebar search field. ⌘R updates the index.
+`scripts/install-app.sh` does a Release build and installs it in `/Applications`.
+
+Use **File › Index Folder…** (⌘O) to pick `~/.claude` or a copy, then type in the search field. A blank search lists every note. ⌘R updates the index.
 
 The index lives at `~/Library/Application Support/MemWhole/index.sqlite`, or wherever `--db` / `$MEMWHOLE_DB` points.
 
 ## Search
 
 - Words are ANDed; the last word matches as a prefix. `--raw` passes FTS5 syntax through (`"exact phrase"`, `OR`, `NOT`).
-- Filters: `--project TEXT`, `--role user|assistant`, `--kind memory|skill|prompt|snapshot|...`, `--since 2026-10-01` or `--since 7d`, `--limit N`.
-- `--json` prints machine-readable hits for a future UI.
-- Results are newest first. `--sort relevance` ranks by match quality instead, where sub-agent messages, `history.jsonl` prompts (which repeat transcript prompts), snapshots and plugin docs rank lower.
+- Filters: `--project TEXT`, `--since 2026-10-01` or `--since 7d`, `--limit N`.
+- `--json` prints machine-readable hits.
+- Results are newest first. `--sort relevance` ranks by match quality instead, with title matches weighted above body matches.
 
 ## Layout
 
 | File | Role |
 |---|---|
-| `Rules.swift` | Path globs to parsers. A new source folder only needs a new `RuleSet`. |
-| `Indexer.swift` | Walks the folder, parses changed files, resumes append-only `.jsonl` files from the stored byte offset. |
+| `Indexer.swift` | Walks `projects/*/memory/`, indexes changed notes, and works out each note's project. |
 | `Secrets.swift` | Masks values under `KEY/TOKEN/SECRET/PASSWORD` names and known token shapes before storing. |
-| `Schema.swift` | Tables plus FTS5 indexes over `messages.text` and `docs.title/body`. |
-| `Search.swift` | One ranked query across both FTS tables. |
-| `Store.swift` | Session, message, doc and count lookups shared by the CLI and the app. |
+| `Schema.swift` | Tables plus an FTS5 index over `notes.title/body`. |
+| `Search.swift` | Ranked or newest-first search, counts and highlighted bodies. |
+| `Store.swift` | Note and count lookups shared by the CLI and the app. |
 
-Everything above is in the `MemWholeKit` library; `Sources/memwhole` is the CLI and `App/MemWhole` the app.
+Everything above is in the `MemWholeKit` library; `Sources/memwhole` is the CLI, `App/MemWhole` the app, and `Tests/` the library tests.

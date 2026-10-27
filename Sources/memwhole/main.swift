@@ -2,13 +2,12 @@ import Foundation
 import MemWholeKit
 
 let usage = """
-    memwhole: local search over ~/.claude-style folders
+    memwhole: local search over Claude's memory notes
 
     USAGE
       memwhole index <folder> [--full]
-      memwhole search <words...> [--limit N] [--project TEXT] [--role user|assistant]
-                                 [--kind KIND] [--since DATE|7d] [--sort date|relevance] [--raw] [--json]
-      memwhole show <session-id-prefix> [--sidechain]
+      memwhole search <words...> [--limit N] [--project TEXT] [--since DATE|7d]
+                                 [--sort date|relevance] [--raw] [--json]
       memwhole stats
 
     OPTIONS
@@ -16,7 +15,6 @@ let usage = """
       --full        Rebuild the index from scratch
       --sort        date (newest first, the default) or relevance
       --raw         Pass the query to SQLite FTS5 as written (AND, OR, NOT, "phrases", prefix*)
-      --kind        memory, skill, task, prompt, snapshot, rules, config, plugin-doc, plugin-manifest, changelog
 
     """
 
@@ -25,7 +23,7 @@ struct Arguments {
     var options: [String: String] = [:]
     var flags: Set<String> = []
 
-    static let flagNames: Set<String> = ["full", "raw", "json", "sidechain", "help"]
+    static let flagNames: Set<String> = ["full", "raw", "json", "help"]
 
     init(_ args: some Sequence<String>) throws {
         var iterator = args.makeIterator()
@@ -85,7 +83,6 @@ func runIndex(_ args: Arguments) throws {
     print("""
         Indexed \(stats.indexed) of \(stats.scanned) files in \(seconds)s \
         (\(stats.unchanged) unchanged, \(stats.removed) removed)
-        Added \(stats.messages) messages and \(stats.docs) docs
         Index: \(Format.path(dbPath))
         """)
 }
@@ -100,17 +97,9 @@ func runSearch(_ args: Arguments) throws {
         options.sort = value
     }
     options.project = args.options["project"]
-    options.kind = args.options["kind"]
     if let limit = args.options["limit"] {
         guard let n = Int(limit), n > 0 else { throw CLIError("--limit must be a positive number") }
         options.limit = n
-    }
-    if let role = args.options["role"] {
-        switch role {
-        case "user", "you": options.role = "user"
-        case "assistant", "claude": options.role = "assistant"
-        default: throw CLIError("--role must be user or assistant")
-        }
     }
     if let since = args.options["since"] { options.since = try parseSince(since) }
 
@@ -140,25 +129,11 @@ func runSearch(_ args: Arguments) throws {
 }
 
 func render(_ hit: Hit, style: Style) -> String {
-    let label: String
-    switch (hit.type, hit.role) {
-    case ("message", "user"): label = style.cyan("you")
-    case ("message", _): label = style.magenta("claude")
-    default: label = style.yellow(hit.role)
-    }
-
-    var header = ["[\(label)\(hit.sidechain ? style.dim(" · agent") : "")]", Format.date(hit.ts)]
+    var header = [Format.date(hit.ts)]
     if let project = hit.project { header.append(Format.path(project)) }
     if let title = hit.title, !title.isBlank { header.append(style.bold(Format.oneLine(title))) }
-
-    var where_: String
-    if hit.type == "message" {
-        where_ = "memwhole show \(Format.shortID(hit.sessionID))"
-    } else {
-        where_ = hit.path ?? ""
-    }
     let snippet = Format.oneLine(hit.snippet)
-    return header.joined(separator: "  ") + "\n    " + snippet + "\n    " + style.dim(where_) + "\n"
+    return header.joined(separator: "  ") + "\n    " + snippet + "\n    " + style.dim(hit.path) + "\n"
 }
 
 /// `2026-10-01`, a full ISO timestamp, or a relative `7d` / `12h`.
@@ -174,59 +149,14 @@ func parseSince(_ value: String) throws -> String {
     return value
 }
 
-func runShow(_ args: Arguments) throws {
-    guard let prefix = args.positionals.first, !prefix.isBlank else { throw CLIError("show needs a session id") }
-    let db = try Schema.open(path: databasePath(args))
-    let style = Style.stdout
-
-    let matches = try Store.sessions(db: db, idPrefix: prefix)
-    guard let session = matches.first else { throw CLIError("No session starts with \(prefix)") }
-    guard matches.count == 1 else {
-        throw CLIError("\(prefix) matches several sessions:\n" + matches.map { "  \($0.id)  \($0.title ?? "")" }.joined(separator: "\n"))
-    }
-
-    print(style.bold(session.title.map(Format.oneLine) ?? "(untitled)"))
-    var details = [session.id, Format.path(session.project)]
-    if let branch = session.branch { details.append(branch) }
-    details.append("\(Format.date(session.firstTS)) → \(Format.date(session.lastTS))")
-    print(style.dim(details.joined(separator: "  ·  ")))
-    print()
-
-    let messages = try Store.messages(db: db, sessionID: session.id, includeSidechain: args.flags.contains("sidechain"))
-    for message in messages {
-        let agent = message.sidechain ? style.dim(" (agent)") : ""
-        switch message.role {
-        case "user":
-            print("\n" + style.cyan("you") + agent + style.dim("  \(Format.date(message.ts))"))
-            print(message.text)
-        default:
-            print("\n" + style.magenta("claude") + agent + style.dim("  \(Format.date(message.ts))"))
-            print(message.text)
-        }
-    }
-}
-
 func runStats(_ args: Arguments) throws {
     let dbPath = databasePath(args)
     let db = try Schema.open(path: dbPath)
     let style = Style.stdout
 
     let counts = try Store.counts(db: db)
-    print(style.bold("Sessions") + "  \(counts.sessions)")
-    print(style.bold("Files") + "     \(counts.files)")
-
-    print(style.bold("\nMessages"))
-    for row in counts.messages {
-        let name = row.role + (row.sidechain ? " (agent)" : "")
-        print("  \(name.padding(toLength: 18, withPad: " ", startingAt: 0)) \(row.count)")
-    }
-
-    print(style.bold("\nDocs"))
-    for row in counts.docs {
-        let name = row.kind.padding(toLength: 18, withPad: " ", startingAt: 0)
-        print("  \(name) \(row.count)  \(style.dim(Format.bytes(row.bytes)))")
-    }
-
+    print(style.bold("Notes") + "     \(counts.notes)  \(style.dim(Format.bytes(counts.bytes)))")
+    print(style.bold("Projects") + "  \(counts.projects)")
     let size = (try? FileManager.default.attributesOfItem(atPath: dbPath)[.size] as? Int64) ?? 0
     print("\n" + style.dim("Index: \(Format.path(dbPath))  \(Format.bytes(size))"))
 }
@@ -244,7 +174,6 @@ do {
     switch command {
     case "index": try runIndex(args)
     case "search", "s": try runSearch(args)
-    case "show": try runShow(args)
     case "stats": try runStats(args)
     case "help", "-h", "--help": print(usage)
     default: throw CLIError("Unknown command: \(command)\n\n\(usage)")
