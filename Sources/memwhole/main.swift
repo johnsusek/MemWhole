@@ -1,4 +1,5 @@
 import Foundation
+import MemWholeKit
 
 let usage = """
     memwhole: local search over ~/.claude-style folders
@@ -55,9 +56,7 @@ struct CLIError: Error, CustomStringConvertible {
 
 func databasePath(_ args: Arguments) -> String {
     if let path = args.options["db"] { return (path as NSString).expandingTildeInPath }
-    if let path = ProcessInfo.processInfo.environment["MEMWHOLE_DB"] { return (path as NSString).expandingTildeInPath }
-    let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-    return support.appendingPathComponent("MemWhole/index.sqlite").path
+    return Store.defaultDatabasePath
 }
 
 func printError(_ message: String) {
@@ -68,32 +67,18 @@ func printError(_ message: String) {
 
 func runIndex(_ args: Arguments) throws {
     guard let folder = args.positionals.first else { throw CLIError("index needs a folder") }
-    // realpath, not resolvingSymlinksInPath: the latter turns /private/tmp into /tmp,
-    // while the directory enumerator reports /private/tmp, so relative paths would not match.
-    let expanded = (folder as NSString).expandingTildeInPath
-    var isDirectory: ObjCBool = false
-    guard FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory), isDirectory.boolValue,
-          let resolved = realpath(expanded, nil) else {
-        throw CLIError("Not a folder: \(expanded)")
+    guard let root = Indexer.resolveFolder(folder) else {
+        throw CLIError("Not a folder: \(folder)")
     }
-    let root = URL(fileURLWithPath: String(cString: resolved), isDirectory: true)
-    free(resolved)
-
     let dbPath = databasePath(args)
-    if args.flags.contains("full") {
-        for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: dbPath + suffix) }
-    }
-    let db = try Schema.open(path: dbPath)
-
     let showProgress = isatty(STDERR_FILENO) != 0
     let start = Date()
-    let stats = try Indexer(db: db, root: root, rules: .claude).run { line in
+    let stats = try Indexer.index(folder: root, databasePath: dbPath, full: args.flags.contains("full")) { line in
         guard showProgress else { return }
         let clipped = line.count > 100 ? String(line.prefix(100)) + "…" : line
         FileHandle.standardError.write(Data("\r\u{1B}[2K\(clipped)".utf8))
     }
     if showProgress { FileHandle.standardError.write(Data("\r\u{1B}[2K".utf8)) }
-    try db.exec("INSERT INTO messages_fts(messages_fts) VALUES ('optimize'); INSERT INTO docs_fts(docs_fts) VALUES ('optimize');")
 
     let seconds = String(format: "%.1f", Date().timeIntervalSince(start))
     print("""
@@ -191,16 +176,7 @@ func runShow(_ args: Arguments) throws {
     let db = try Schema.open(path: databasePath(args))
     let style = Style.stdout
 
-    let sessions = try db.prepare("""
-        SELECT id, project, COALESCE(custom_title, ai_title, first_prompt), branch, first_ts, last_ts
-        FROM sessions WHERE id LIKE ? || '%' ORDER BY last_ts DESC LIMIT 5
-        """)
-    try sessions.bind([prefix])
-    var matches: [(id: String, project: String?, title: String?, branch: String?, first: String?, last: String?)] = []
-    while try sessions.step() {
-        matches.append((sessions.text(0) ?? "", sessions.text(1), sessions.text(2), sessions.text(3),
-                        sessions.text(4), sessions.text(5)))
-    }
+    let matches = try Store.sessions(db: db, idPrefix: prefix)
     guard let session = matches.first else { throw CLIError("No session starts with \(prefix)") }
     guard matches.count == 1 else {
         throw CLIError("\(prefix) matches several sessions:\n" + matches.map { "  \($0.id)  \($0.title ?? "")" }.joined(separator: "\n"))
@@ -209,31 +185,23 @@ func runShow(_ args: Arguments) throws {
     print(style.bold(session.title.map(Format.oneLine) ?? "(untitled)"))
     var details = [session.id, Format.path(session.project)]
     if let branch = session.branch { details.append(branch) }
-    details.append("\(Format.date(session.first)) → \(Format.date(session.last))")
+    details.append("\(Format.date(session.firstTS)) → \(Format.date(session.lastTS))")
     print(style.dim(details.joined(separator: "  ·  ")))
     print()
 
-    let includeSidechain = args.flags.contains("sidechain")
     let includeTools = !args.flags.contains("no-tools")
-    let messages = try db.prepare("""
-        SELECT role, ts, text, is_sidechain FROM messages
-        WHERE session_id = ? AND (? OR is_sidechain = 0)
-        ORDER BY ts, id
-        """)
-    try messages.bind([session.id, includeSidechain])
-    while try messages.step() {
-        let role = messages.text(0) ?? ""
-        let text = messages.text(2) ?? ""
-        let agent = messages.int(3) != 0 ? style.dim(" (agent)") : ""
-        switch role {
+    let messages = try Store.messages(db: db, sessionID: session.id, includeSidechain: args.flags.contains("sidechain"))
+    for message in messages {
+        let agent = message.sidechain ? style.dim(" (agent)") : ""
+        switch message.role {
         case "tool":
-            if includeTools { print(style.dim("  → \(Format.path(text))") + agent) }
+            if includeTools { print(style.dim("  → \(Format.path(message.text))") + agent) }
         case "user":
-            print("\n" + style.cyan("you") + agent + style.dim("  \(Format.date(messages.text(1)))"))
-            print(text)
+            print("\n" + style.cyan("you") + agent + style.dim("  \(Format.date(message.ts))"))
+            print(message.text)
         default:
-            print("\n" + style.magenta("claude") + agent + style.dim("  \(Format.date(messages.text(1)))"))
-            print(text)
+            print("\n" + style.magenta("claude") + agent + style.dim("  \(Format.date(message.ts))"))
+            print(message.text)
         }
     }
 }
@@ -243,22 +211,20 @@ func runStats(_ args: Arguments) throws {
     let db = try Schema.open(path: dbPath)
     let style = Style.stdout
 
-    let count = { (sql: String) in try db.prepare(sql).scalar() ?? 0 }
-    print(style.bold("Sessions") + "  \(try count("SELECT COUNT(*) FROM sessions"))")
-    print(style.bold("Files") + "     \(try count("SELECT COUNT(*) FROM files"))")
+    let counts = try Store.counts(db: db)
+    print(style.bold("Sessions") + "  \(counts.sessions)")
+    print(style.bold("Files") + "     \(counts.files)")
 
     print(style.bold("\nMessages"))
-    let roles = try db.prepare("SELECT role, is_sidechain, COUNT(*) FROM messages GROUP BY 1, 2 ORDER BY 3 DESC")
-    while try roles.step() {
-        let name = (roles.text(0) ?? "") + (roles.int(1) != 0 ? " (agent)" : "")
-        print("  \(name.padding(toLength: 18, withPad: " ", startingAt: 0)) \(roles.int(2))")
+    for row in counts.messages {
+        let name = row.role + (row.sidechain ? " (agent)" : "")
+        print("  \(name.padding(toLength: 18, withPad: " ", startingAt: 0)) \(row.count)")
     }
 
     print(style.bold("\nDocs"))
-    let kinds = try db.prepare("SELECT kind, COUNT(*), SUM(LENGTH(body)) FROM docs GROUP BY 1 ORDER BY 2 DESC")
-    while try kinds.step() {
-        let name = (kinds.text(0) ?? "").padding(toLength: 18, withPad: " ", startingAt: 0)
-        print("  \(name) \(kinds.int(1))  \(style.dim(Format.bytes(kinds.int64(2))))")
+    for row in counts.docs {
+        let name = row.kind.padding(toLength: 18, withPad: " ", startingAt: 0)
+        print("  \(name) \(row.count)  \(style.dim(Format.bytes(row.bytes)))")
     }
 
     let size = (try? FileManager.default.attributesOfItem(atPath: dbPath)[.size] as? Int64) ?? 0

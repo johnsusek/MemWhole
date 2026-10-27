@@ -6,11 +6,16 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .executable(name: "memwhole", targets: ["memwhole"]),
+        .library(name: "MemWholeKit", targets: ["MemWholeKit"]),
     ],
     targets: [
+        .target(
+            name: "MemWholeKit",
+            linkerSettings: [.linkedLibrary("sqlite3")]
+        ),
         .executableTarget(
             name: "memwhole",
-            linkerSettings: [.linkedLibrary("sqlite3")]
+            dependencies: ["MemWholeKit"]
         ),
     ]
 )

@@ -1,0 +1,40 @@
+# Generate MemWhole.xcodeproj with: xcodegen --spec App/project.yml
+name: MemWhole
+options:
+  bundleIdPrefix: net.johnsolo
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+packages:
+  MemWholeKit:
+    path: ..
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  MemWhole:
+    type: application
+    platform: macOS
+    sources:
+      - path: MemWhole
+    dependencies:
+      - package: MemWholeKit
+        product: MemWholeKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.johnsolo.MemWhole
+        PRODUCT_NAME: MemWhole
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: MemWhole
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        # Reads ~/.claude and shares the CLI's index in ~/Library/Application Support/MemWhole.
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"

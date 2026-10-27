@@ -1,35 +1,40 @@
 import Foundation
 
-struct SearchOptions {
-    var query = ""
-    var limit = 20
-    var project: String?
+public struct SearchOptions: Sendable {
+    public var query = ""
+    public var limit = 20
+    public var project: String?
     /// user | assistant | tool. Limits results to transcript messages.
-    var role: String?
+    public var role: String?
     /// Doc kind (memory, skill, prompt...). Limits results to docs.
-    var kind: String?
+    public var kind: String?
     /// ISO date or timestamp prefix, compared against `ts`.
-    var since: String?
+    public var since: String?
     /// Pass the query to FTS5 as written instead of quoting each word.
-    var raw = false
+    public var raw = false
+
+    public init() {}
 }
 
-struct Hit: Encodable {
-    let type: String          // message | doc
-    let id: Int64
-    let sessionID: String?
-    let role: String          // user | assistant | tool, or the doc kind
-    let ts: String?
-    let project: String?
-    let title: String?
-    let toolName: String?
-    let path: String?
-    let sidechain: Bool
-    let snippet: String
-    let score: Double
+public struct Hit: Encodable, Sendable, Identifiable {
+    public let type: String          // message | doc
+    public let rowID: Int64
+    public let sessionID: String?
+    public let role: String          // user | assistant | tool, or the doc kind
+    public let ts: String?
+    public let project: String?
+    public let title: String?
+    public let toolName: String?
+    public let path: String?
+    public let sidechain: Bool
+    public let snippet: String
+    public let score: Double
+
+    /// Unique across both tables.
+    public var id: String { "\(type)-\(rowID)" }
 }
 
-enum Search {
+public enum Search {
     /// Rank multiplier for results that are usually noise or duplicates. bm25 scores are negative,
     /// so a smaller multiplier pushes a row down.
     static let sidechainWeight = 0.5
@@ -37,7 +42,7 @@ enum Search {
     static let lowKinds = ["prompt", "snapshot", "plugin-doc", "plugin-manifest", "changelog"]
 
     /// Quotes each word so punctuation can't break FTS5 syntax. The last word matches as a prefix.
-    static func ftsQuery(_ text: String) -> String {
+    public static func ftsQuery(_ text: String) -> String {
         let words = text.split(whereSeparator: \.isWhitespace)
             .map { $0.replacingOccurrences(of: "\"", with: "") }
             .filter { !$0.isEmpty }
@@ -46,7 +51,7 @@ enum Search {
         }.joined(separator: " ")
     }
 
-    static func run(db: Database, options: SearchOptions, marks: (open: String, close: String)) throws -> [Hit] {
+    public static func run(db: Database, options: SearchOptions, marks: (open: String, close: String)) throws -> [Hit] {
         let match = options.raw ? options.query : ftsQuery(options.query)
         guard !match.isEmpty else { return [] }
 
@@ -102,7 +107,7 @@ enum Search {
         while try stmt.step() {
             hits.append(Hit(
                 type: stmt.text(0) ?? "",
-                id: stmt.int64(1),
+                rowID: stmt.int64(1),
                 sessionID: stmt.text(2),
                 role: stmt.text(3) ?? "",
                 ts: stmt.text(4),

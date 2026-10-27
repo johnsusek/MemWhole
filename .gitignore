@@ -4,3 +4,7 @@
 *.sqlite-*
 # Sample copy of ~/.claude: holds transcripts and secrets
 /claude/
+
+# App build output (xcodebuild -derivedDataPath)
+App/.build/
+xcuserdata/

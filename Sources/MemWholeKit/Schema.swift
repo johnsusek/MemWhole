@@ -1,6 +1,6 @@
 import Foundation
 
-enum Schema {
+public enum Schema {
     static let version = 1
 
     static let sql = """
@@ -84,7 +84,7 @@ enum Schema {
     END;
     """
 
-    static func open(path: String) throws -> Database {
+    public static func open(path: String) throws -> Database {
         let directory = (path as NSString).deletingLastPathComponent
         if !directory.isEmpty {
             try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)

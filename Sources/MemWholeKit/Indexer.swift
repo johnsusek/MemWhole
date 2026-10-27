@@ -1,16 +1,16 @@
 import Foundation
 
-struct IndexStats {
-    var scanned = 0
-    var indexed = 0
-    var unchanged = 0
-    var removed = 0
-    var messages = 0
-    var docs = 0
+public struct IndexStats: Sendable {
+    public var scanned = 0
+    public var indexed = 0
+    public var unchanged = 0
+    public var removed = 0
+    public var messages = 0
+    public var docs = 0
 }
 
 /// Walks a source folder, matches files against its rules and writes rows for new or changed files.
-final class Indexer {
+public final class Indexer {
     private struct Entry {
         let url: URL
         let relativePath: String
@@ -60,7 +60,7 @@ final class Indexer {
         return formatter
     }()
 
-    init(db: Database, root: URL, rules: RuleSet) throws {
+    public init(db: Database, root: URL, rules: RuleSet) throws {
         self.db = db
         self.root = root
         self.rules = rules
@@ -92,7 +92,34 @@ final class Indexer {
         }
     }
 
-    func run(progress: (String) -> Void) throws -> IndexStats {
+    /// Opens (or with `full`, recreates) the index at `databasePath` and brings it up to date with `folder`.
+    public static func index(folder: URL, databasePath: String, full: Bool,
+                             progress: (String) -> Void) throws -> IndexStats {
+        if full {
+            for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: databasePath + suffix) }
+        }
+        let db = try Schema.open(path: databasePath)
+        let stats = try Indexer(db: db, root: folder, rules: .claude).run(progress: progress)
+        try db.exec("""
+            INSERT INTO messages_fts(messages_fts) VALUES ('optimize');
+            INSERT INTO docs_fts(docs_fts) VALUES ('optimize');
+            """)
+        return stats
+    }
+
+    /// The real path of a folder, or nil if it isn't one.
+    /// realpath, not resolvingSymlinksInPath: the latter turns /private/tmp into /tmp,
+    /// while the directory enumerator reports /private/tmp, so relative paths would not match.
+    public static func resolveFolder(_ path: String) -> URL? {
+        let expanded = (path as NSString).expandingTildeInPath
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory), isDirectory.boolValue,
+              let resolved = realpath(expanded, nil) else { return nil }
+        defer { free(resolved) }
+        return URL(fileURLWithPath: String(cString: resolved), isDirectory: true)
+    }
+
+    public func run(progress: (String) -> Void) throws -> IndexStats {
         let entries = try walk()
         let known = try knownFiles()
         let total = entries.count
@@ -400,5 +427,5 @@ final class Indexer {
 }
 
 extension StringProtocol {
-    var isBlank: Bool { allSatisfy(\.isWhitespace) }
+    public var isBlank: Bool { allSatisfy(\.isWhitespace) }
 }

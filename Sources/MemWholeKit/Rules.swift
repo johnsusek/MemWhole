@@ -1,7 +1,7 @@
 import Foundation
 
 /// How a matched file is turned into index rows.
-enum ParserKind: String {
+public enum ParserKind: String, Sendable {
     case transcript       // Claude Code session .jsonl, one row per message block
     case history          // history.jsonl, one doc per typed prompt
     case markdown         // full text, frontmatter name/description as title
@@ -10,7 +10,7 @@ enum ParserKind: String {
     case skip
 }
 
-struct Rule {
+public struct Rule {
     let glob: String
     let parser: ParserKind
     /// Doc kind shown in results (memory, skill, config...).
@@ -58,7 +58,7 @@ struct Rule {
 }
 
 /// Rule set for one source folder. First match wins; unmatched files are skipped.
-struct RuleSet {
+public struct RuleSet {
     let source: String
     let rules: [Rule]
 
@@ -73,7 +73,7 @@ struct RuleSet {
         return rule.parser == .skip && rule.prune
     }
 
-    static let claude = RuleSet(source: "claude", rules: [
+    nonisolated(unsafe) public static let claude = RuleSet(source: "claude", rules: [
         // Never index
         Rule("**/*.key", .skip),
         Rule("**/.git/**", .skip, prune: true),
