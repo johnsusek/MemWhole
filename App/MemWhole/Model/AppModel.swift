@@ -233,6 +233,30 @@ final class AppModel {
         }
     }
 
+    // MARK: - Trash
+
+    var canTrashSelection: Bool { selection != nil && folderPath != nil && !isIndexing }
+
+    /// Moves the selected note to the Trash, drops its MEMORY.md pointer, and selects a neighbor.
+    func trashSelection() {
+        guard canTrashSelection, let id = selection, let folderPath,
+              let row = hits.firstIndex(where: { $0.id == id }) else { return }
+        let hit = hits[row]
+        do {
+            try Memories.trash(notePath: hit.path, in: URL(fileURLWithPath: folderPath))
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Couldn’t move “\(Format.oneLine(hit.title ?? hit.path))” to the Trash."
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+            return
+        }
+        hits.remove(at: row)
+        total = total.map { max($0 - 1, 0) }
+        selection = hits.isEmpty ? nil : hits[min(row, hits.count - 1)].id
+        reindex()
+    }
+
     // MARK: - Files and pasteboard
 
     /// The file a note path (relative to the indexed folder) points at.

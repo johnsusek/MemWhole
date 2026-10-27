@@ -140,3 +140,50 @@ private struct Fixture {
         #expect(!note.body.contains("sk-abcdefghijklmnopqrstuvwxyz123456"))
     }
 }
+
+@Suite struct TrashTests {
+    @Test func trashesNoteAndItsPointer() throws {
+        let f = try Fixture()
+        try f.write("projects/-Users-me-App/memory/build.md", "---\nname: build-steps\n---\nRun the release build.")
+        try f.write("projects/-Users-me-App/memory/keep.md", "---\nname: keep\n---\nStays.")
+        try f.write("projects/-Users-me-App/memory/MEMORY.md",
+                    "- [Build](build.md) — release build\n- [Keep](keep.md) — stays\n")
+        try f.index()
+
+        var trashed: [URL] = []
+        try Memories.trash(notePath: "projects/-Users-me-App/memory/build.md", in: f.root) {
+            trashed.append($0)
+            try FileManager.default.removeItem(at: $0)
+        }
+        #expect(trashed.map(\.lastPathComponent) == ["build.md"])
+
+        let index = try String(contentsOf: f.root.appendingPathComponent("projects/-Users-me-App/memory/MEMORY.md"), encoding: .utf8)
+        #expect(index == "- [Keep](keep.md) — stays\n")
+
+        #expect(try f.index().removed == 1)
+        #expect(try f.search().map(\.title) == ["keep"])
+    }
+
+    @Test func trashesNoteInSubfolderWithoutIndexFile() throws {
+        let f = try Fixture()
+        try f.write("projects/-Users-me-App/memory/topics/a.md", "# A\nbody")
+        try f.index()
+
+        try Memories.trash(notePath: "projects/-Users-me-App/memory/topics/a.md", in: f.root) {
+            try FileManager.default.removeItem(at: $0)
+        }
+        try f.index()
+        #expect(try f.search().isEmpty)
+    }
+
+    @Test func failedTrashLeavesPointer() throws {
+        let f = try Fixture()
+        try f.write("projects/-Users-me-App/memory/MEMORY.md", "- [Gone](gone.md) — missing\n")
+        struct Failure: Error {}
+        #expect(throws: Failure.self) {
+            try Memories.trash(notePath: "projects/-Users-me-App/memory/gone.md", in: f.root) { _ in throw Failure() }
+        }
+        let index = try String(contentsOf: f.root.appendingPathComponent("projects/-Users-me-App/memory/MEMORY.md"), encoding: .utf8)
+        #expect(index == "- [Gone](gone.md) — missing\n")
+    }
+}

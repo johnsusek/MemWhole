@@ -1,3 +1,4 @@
+import AppKit
 import MemWholeKit
 import SwiftUI
 
@@ -13,9 +14,20 @@ struct AppCommands: Commands {
             Button("Update Index") { model.reindex() }
                 .keyboardShortcut("r")
                 .disabled(model.folderPath == nil || model.isIndexing)
+            Divider()
+            Button("Move to Trash") {
+                // ⌘⌫ in the search field deletes text, as it would without this menu item.
+                if let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
+                    editor.deleteToBeginningOfLine(nil)
+                } else {
+                    model.trashSelection()
+                }
+            }
+                .keyboardShortcut(.delete)
+                .disabled(!model.canTrashSelection)
         }
 
-        // A read-only app: searching replaces the text-editing Find, Spelling and Substitutions menus.
+        // Notes are only ever trashed, never edited: searching replaces the text-editing Find, Spelling and Substitutions menus.
         CommandGroup(replacing: .textEditing) {
             Button("Find…") { model.isSearchFocused = true }
                 .keyboardShortcut("f")

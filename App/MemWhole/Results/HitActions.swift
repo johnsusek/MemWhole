@@ -15,5 +15,11 @@ struct HitActions: View {
             Divider()
             Button("Show in Finder") { model.reveal(url) }
         }
+        Divider()
+        Button("Move to Trash") {
+            model.selection = hit.id
+            model.trashSelection()
+        }
+        .disabled(model.folderPath == nil || model.isIndexing)
     }
 }
