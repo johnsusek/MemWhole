@@ -47,4 +47,13 @@ enum Scope: String, CaseIterable, Identifiable {
         default: return counts.docs.first { $0.kind == kind }?.count ?? 0
         }
     }
+
+    /// Results this scope shows for a search: matching transcripts and/or docs.
+    func count(in counts: Search.Counts) -> Int {
+        switch self {
+        case .all: return counts.messages + counts.docs.values.reduce(0, +)
+        case .transcripts: return counts.messages
+        default: return kind.flatMap { counts.docs[$0] } ?? 0
+        }
+    }
 }

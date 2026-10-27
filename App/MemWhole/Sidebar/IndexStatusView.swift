@@ -1,16 +1,14 @@
 import MemWholeKit
 import SwiftUI
 
-/// Sidebar footer: indexing progress, or what the index holds.
+/// Sidebar footer shown while indexing, with its progress.
 struct IndexStatusView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         HStack(spacing: 8) {
-            if model.isIndexing {
-                ProgressView().controlSize(.small)
-            }
-            Text(model.isIndexing ? model.progress : model.status)
+            ProgressView().controlSize(.small)
+            Text(model.progress)
                 .lineLimit(2)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)

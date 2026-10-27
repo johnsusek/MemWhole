@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Source list of what a search can cover, with the index's status underneath.
+/// Source list of what a search can cover, with indexing progress underneath while it runs.
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
 
@@ -11,13 +11,15 @@ struct SidebarView: View {
             Section("Library") {
                 ForEach(Scope.allCases) { scope in
                     Label(scope.title, systemImage: scope.systemImage)
-                        .badge(model.counts.map { scope.count(in: $0) } ?? 0)
+                        .badge(model.count(for: scope))
                         .tag(scope)
                 }
             }
         }
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom, spacing: 0) { IndexStatusView() }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if model.isIndexing { IndexStatusView() }
+        }
         .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 300)
     }
 }

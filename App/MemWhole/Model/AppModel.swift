@@ -23,6 +23,8 @@ final class AppModel {
     var progress = ""
     var status = ""
     var counts: Store.Counts?
+    /// Result counts for the current query, or nil when there's no search.
+    var searchCounts: Search.Counts?
     var errorMessage: String?
 
     let databasePath = Store.defaultDatabasePath
@@ -53,6 +55,12 @@ final class AppModel {
         refreshStatus()
     }
 
+    /// The sidebar badge for a scope: its results for the current search, otherwise what it holds.
+    func count(for scope: Scope) -> Int {
+        if let searchCounts { return scope.count(in: searchCounts) }
+        return counts.map { scope.count(in: $0) } ?? 0
+    }
+
     /// A checkmark binding for the View menu's scope items.
     func isShowing(_ scope: Scope) -> Binding<Bool> {
         Binding { self.scope == scope } set: { if $0 { self.scope = scope } }
@@ -69,23 +77,28 @@ final class AppModel {
         isLoadingMore = false
         guard !query.isBlank else {
             hits = []
+            searchCounts = nil
             return
         }
         let request = searchOptions(offset: 0)
         searchTask = Task {
             try? await Task.sleep(for: .milliseconds(120))
             guard !Task.isCancelled else { return }
+            async let counts = fetchCounts(request)
             let result = await fetch(request)
+            let searchCounts = await counts
             guard !Task.isCancelled else { return }
             switch result {
             case .success(let hits):
                 self.hits = hits
+                self.searchCounts = searchCounts
                 hasMore = hits.count == Self.pageSize
                 errorMessage = nil
                 // Grouped hits keep their id as the query changes; refresh the open file's highlights.
                 if let selection, hits.contains(where: { $0.id == selection }) { loadDetail() }
             case .failure(let error):
                 self.hits = []
+                self.searchCounts = nil
                 errorMessage = "\(error)"
             }
         }
@@ -132,6 +145,13 @@ final class AppModel {
         let path = databasePath
         return await Task.detached {
             Result { try Search.run(db: Schema.open(path: path), options: request, marks: (Marks.open, Marks.close)) }
+        }.value
+    }
+
+    private func fetchCounts(_ request: SearchOptions) async -> Search.Counts? {
+        let path = databasePath
+        return await Task.detached {
+            try? Search.counts(db: Schema.open(path: path), options: request)
         }.value
     }
 

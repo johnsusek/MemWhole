@@ -97,12 +97,7 @@ public enum Search {
         var params: [SQLBindable?] = []
 
         if options.kind == nil {
-            var filter = "messages_fts MATCH ? AND \(Store.firstCopy)"
-            var filterParams: [SQLBindable?] = [match]
-            if let role = options.role { filter += " AND m.role = ?"; filterParams.append(role) }
-            if options.sidechainOnly { filter += " AND m.is_sidechain" }
-            if let project = options.project { filter += " AND s.project LIKE ?"; filterParams.append("%\(project)%") }
-            if let since = options.since { filter += " AND m.ts >= ?"; filterParams.append(since) }
+            let (filter, filterParams) = messageFilter(options, match: match)
             let score = "bm25(messages_fts) * CASE WHEN m.is_sidechain THEN \(sidechainWeight) ELSE 1.0 END"
             let title = "COALESCE(s.custom_title, s.ai_title, s.first_prompt)"
 
@@ -145,7 +140,8 @@ public enum Search {
 
         if options.role == nil, !options.messagesOnly {
             let lowKinds = lowKinds.map { "'\($0)'" }.joined(separator: ", ")
-            var sql = """
+            let (filter, filterParams) = docFilter(options, match: match)
+            selects.append("""
                 SELECT 'doc', d.id, d.session_id, d.kind, d.ts, COALESCE(d.project, s.project),
                        d.title, d.path, 0,
                        snippet(docs_fts, -1, ?, ?, '…', 24),
@@ -154,16 +150,9 @@ public enum Search {
                 FROM docs_fts
                 JOIN docs d ON d.id = docs_fts.rowid
                 LEFT JOIN sessions s ON s.id = d.session_id
-                WHERE docs_fts MATCH ?
-                """
-            params += [marks.open, marks.close, match]
-            if let kind = options.kind { sql += " AND d.kind = ?"; params.append(kind) }
-            if let project = options.project {
-                sql += " AND COALESCE(d.project, s.project) LIKE ?"
-                params.append("%\(project)%")
-            }
-            if let since = options.since { sql += " AND d.ts >= ?"; params.append(since) }
-            selects.append(sql)
+                WHERE \(filter)
+                """)
+            params += [marks.open, marks.close] + filterParams
         }
 
         let sql = prefix + selects.joined(separator: "\nUNION ALL\n")
@@ -202,6 +191,74 @@ public enum Search {
             }
         }
         return hits
+    }
+
+    /// How many results a search finds in each part of the index, before paging.
+    public struct Counts: Sendable {
+        /// Matching transcript files when grouped by file, otherwise matching messages.
+        public var messages = 0
+        /// Matching docs by kind.
+        public var docs: [String: Int] = [:]
+
+        public init() {}
+    }
+
+    /// Result counts for the options' query across messages and every doc kind, ignoring `kind` and `messagesOnly`
+    /// so each scope's total is known at once.
+    public static func counts(db: Database, options: SearchOptions) throws -> Counts {
+        var counts = Counts()
+        let match = match(options)
+        guard !match.isEmpty else { return counts }
+
+        let (messageFilter, messageParams) = messageFilter(options, match: match)
+        let distinct = options.groupByFile ? "DISTINCT m.file_id" : "*"
+        let messages = try db.prepare("""
+            SELECT COUNT(\(distinct)) FROM messages_fts
+            JOIN messages m ON m.id = messages_fts.rowid
+            LEFT JOIN sessions s ON s.id = m.session_id
+            WHERE \(messageFilter)
+            """)
+        try messages.bind(messageParams)
+        if try messages.step() { counts.messages = messages.int(0) }
+
+        guard options.role == nil else { return counts }
+        var docOptions = options
+        docOptions.kind = nil
+        let (docFilter, docParams) = docFilter(docOptions, match: match)
+        let docs = try db.prepare("""
+            SELECT d.kind, COUNT(*) FROM docs_fts
+            JOIN docs d ON d.id = docs_fts.rowid
+            LEFT JOIN sessions s ON s.id = d.session_id
+            WHERE \(docFilter)
+            GROUP BY 1
+            """)
+        try docs.bind(docParams)
+        while try docs.step() { counts.docs[docs.text(0) ?? ""] = docs.int(1) }
+        return counts
+    }
+
+    /// WHERE clause and parameters for matching messages (`m`, joined to sessions `s`).
+    private static func messageFilter(_ options: SearchOptions, match: String) -> (String, [SQLBindable?]) {
+        var filter = "messages_fts MATCH ? AND \(Store.firstCopy)"
+        var params: [SQLBindable?] = [match]
+        if let role = options.role { filter += " AND m.role = ?"; params.append(role) }
+        if options.sidechainOnly { filter += " AND m.is_sidechain" }
+        if let project = options.project { filter += " AND s.project LIKE ?"; params.append("%\(project)%") }
+        if let since = options.since { filter += " AND m.ts >= ?"; params.append(since) }
+        return (filter, params)
+    }
+
+    /// WHERE clause and parameters for matching docs (`d`, joined to sessions `s`).
+    private static func docFilter(_ options: SearchOptions, match: String) -> (String, [SQLBindable?]) {
+        var filter = "docs_fts MATCH ?"
+        var params: [SQLBindable?] = [match]
+        if let kind = options.kind { filter += " AND d.kind = ?"; params.append(kind) }
+        if let project = options.project {
+            filter += " AND COALESCE(d.project, s.project) LIKE ?"
+            params.append("%\(project)%")
+        }
+        if let since = options.since { filter += " AND d.ts >= ?"; params.append(since) }
+        return (filter, params)
     }
 
     private static func messageSnippets(db: Database, match: String, ids: [Int64],
