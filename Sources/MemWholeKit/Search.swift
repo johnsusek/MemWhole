@@ -3,6 +3,8 @@ import Foundation
 public struct SearchOptions: Sendable {
     public var query = ""
     public var limit = 20
+    /// Rows to skip, for paging through results.
+    public var offset = 0
     public var project: String?
     /// user | assistant. Limits results to transcript messages.
     public var role: String?
@@ -105,8 +107,10 @@ public enum Search {
         }
 
         let sql = selects.joined(separator: "\nUNION ALL\n")
-            + (options.sort == .date ? "\nORDER BY 5 DESC, 11 LIMIT ?" : "\nORDER BY 11 LIMIT ?")
-        params.append(options.limit)
+            // Row type and id break ties so pages don't overlap or skip rows.
+            + (options.sort == .date ? "\nORDER BY 5 DESC, 11, 1, 2" : "\nORDER BY 11, 1, 2")
+            + "\nLIMIT ? OFFSET ?"
+        params += [options.limit, options.offset]
 
         let stmt = try db.prepare(sql)
         try stmt.bind(params)

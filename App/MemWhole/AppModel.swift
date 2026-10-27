@@ -4,27 +4,17 @@ import Observation
 
 /// Which slice of the index a search covers.
 enum Scope: String, CaseIterable, Identifiable {
-    case all, you, claude, memory, skills, prompts, snapshots
+    case all, memory, skills, prompts, snapshots
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .all: "Everything"
-        case .you: "Your messages"
-        case .claude: "Claude's messages"
         case .memory: "Memory"
         case .skills: "Skills"
         case .prompts: "Prompt history"
         case .snapshots: "File snapshots"
-        }
-    }
-
-    var role: String? {
-        switch self {
-        case .you: "user"
-        case .claude: "assistant"
-        default: nil
         }
     }
 
@@ -57,6 +47,8 @@ final class AppModel {
     var scope = Scope.all { didSet { scheduleSearch() } }
     var sort = SearchSort.date { didSet { scheduleSearch() } }
     var hits: [Hit] = []
+    var hasMore = false
+    var isLoadingMore = false
     var selection: Hit.ID? { didSet { loadDetail() } }
     var detail: Detail?
 
@@ -89,38 +81,73 @@ final class AppModel {
 
     // MARK: - Search
 
+    /// Results fetched per page; more load as the list scrolls to the end.
+    static let pageSize = 200
+
     private func scheduleSearch() {
         searchTask?.cancel()
-        let text = query
-        guard !text.isBlank else {
+        hasMore = false
+        isLoadingMore = false
+        guard !query.isBlank else {
             hits = []
             return
         }
-        var options = SearchOptions()
-        options.query = text
-        options.limit = 200
-        options.role = scope.role
-        options.kind = scope.kind
-        options.sort = sort
-        let request = options
-        let path = databasePath
-
+        let request = searchOptions(offset: 0)
         searchTask = Task {
             try? await Task.sleep(for: .milliseconds(120))
             guard !Task.isCancelled else { return }
-            let result = await Task.detached {
-                Result { try Search.run(db: Schema.open(path: path), options: request, marks: (Marks.open, Marks.close)) }
-            }.value
+            let result = await fetch(request)
             guard !Task.isCancelled else { return }
             switch result {
             case .success(let hits):
                 self.hits = hits
+                hasMore = hits.count == Self.pageSize
                 errorMessage = nil
             case .failure(let error):
                 self.hits = []
                 errorMessage = "\(error)"
             }
         }
+    }
+
+    /// Appends the next page of results for the current search.
+    func loadMore() {
+        guard hasMore, !isLoadingMore, !query.isBlank else { return }
+        isLoadingMore = true
+        let request = searchOptions(offset: hits.count)
+        let previous = searchTask
+        searchTask = Task {
+            await previous?.value
+            guard !Task.isCancelled else { return }
+            let result = await fetch(request)
+            guard !Task.isCancelled else { return }
+            isLoadingMore = false
+            switch result {
+            case .success(let page):
+                hits += page
+                hasMore = page.count == Self.pageSize
+            case .failure(let error):
+                hasMore = false
+                errorMessage = "\(error)"
+            }
+        }
+    }
+
+    private func searchOptions(offset: Int) -> SearchOptions {
+        var options = SearchOptions()
+        options.query = query
+        options.limit = Self.pageSize
+        options.offset = offset
+        options.kind = scope.kind
+        options.sort = sort
+        return options
+    }
+
+    private func fetch(_ request: SearchOptions) async -> Result<[Hit], Error> {
+        let path = databasePath
+        return await Task.detached {
+            Result { try Search.run(db: Schema.open(path: path), options: request, marks: (Marks.open, Marks.close)) }
+        }.value
     }
 
     private func loadDetail() {

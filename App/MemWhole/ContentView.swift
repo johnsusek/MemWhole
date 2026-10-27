@@ -8,8 +8,9 @@ struct ContentView: View {
         @Bindable var model = model
 
         NavigationSplitView {
-            List(model.hits, selection: $model.selection) { hit in
-                HitRow(hit: hit)
+            List(selection: $model.selection) {
+                ForEach(model.hits) { HitRow(hit: $0) }
+                if model.hasMore { loadMoreRow }
             }
             .overlay { emptyState }
             .safeAreaInset(edge: .bottom) { statusBar }
@@ -65,6 +66,21 @@ struct ContentView: View {
         } else if model.hits.isEmpty {
             ContentUnavailableView.search(text: model.query)
         }
+    }
+
+    /// Loads the next page when scrolled into view; the button covers a missed appearance.
+    private var loadMoreRow: some View {
+        HStack {
+            if model.isLoadingMore {
+                ProgressView().controlSize(.small)
+            } else {
+                Button("Load More") { model.loadMore() }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .selectionDisabled()
+        .onAppear { model.loadMore() }
     }
 
     private var statusBar: some View {
