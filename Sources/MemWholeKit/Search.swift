@@ -8,6 +8,12 @@ public struct SearchOptions: Sendable {
     public var project: String?
     /// user | assistant. Limits results to transcript messages.
     public var role: String?
+    /// Only subagent (sidechain) transcript messages, skipping the main conversation.
+    public var sidechainOnly = false
+    /// One hit per transcript file, carrying its match count, instead of one per message.
+    public var groupByFile = false
+    /// Only transcript messages, skipping docs.
+    public var messagesOnly = false
     /// Doc kind (memory, skill, prompt...). Limits results to docs.
     public var kind: String?
     /// ISO date or timestamp prefix, compared against `ts`.
@@ -29,6 +35,8 @@ public struct Hit: Encodable, Sendable, Identifiable {
     public let type: String          // message | doc
     public let rowID: Int64
     public let sessionID: String?
+    /// Source transcript file, for message hits.
+    public let fileID: Int64?
     public let role: String          // user | assistant, or the doc kind
     public let ts: String?
     public let project: String?
@@ -37,9 +45,25 @@ public struct Hit: Encodable, Sendable, Identifiable {
     public let sidechain: Bool
     public let snippet: String
     public let score: Double
+    /// Matching messages in the file when grouped by file, otherwise 1.
+    public let matches: Int
+    let groupedByFile: Bool
 
-    /// Unique across both tables.
-    public var id: String { "\(type)-\(rowID)" }
+    /// Unique across both tables. A grouped hit is keyed by its file so it stays selected as the query changes.
+    public var id: String {
+        if groupedByFile, type == "message", let fileID { return "file-\(fileID)" }
+        return "\(type)-\(rowID)"
+    }
+
+    func with(snippet: String) -> Hit {
+        Hit(type: type, rowID: rowID, sessionID: sessionID, fileID: fileID, role: role, ts: ts, project: project,
+            title: title, path: path, sidechain: sidechain, snippet: snippet, score: score, matches: matches,
+            groupedByFile: groupedByFile)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, rowID, sessionID, fileID, role, ts, project, title, path, sidechain, snippet, score, matches
+    }
 }
 
 public enum Search {
@@ -59,38 +83,74 @@ public enum Search {
         }.joined(separator: " ")
     }
 
+    /// The FTS5 expression for the options' query.
+    public static func match(_ options: SearchOptions) -> String {
+        options.raw ? options.query : ftsQuery(options.query)
+    }
+
     public static func run(db: Database, options: SearchOptions, marks: (open: String, close: String)) throws -> [Hit] {
-        let match = options.raw ? options.query : ftsQuery(options.query)
+        let match = match(options)
         guard !match.isEmpty else { return [] }
 
+        var prefix = ""
         var selects: [String] = []
         var params: [SQLBindable?] = []
 
         if options.kind == nil {
-            var sql = """
-                SELECT 'message', m.id, m.session_id, m.role, m.ts, s.project,
-                       COALESCE(s.custom_title, s.ai_title, s.first_prompt), NULL, m.is_sidechain,
-                       snippet(messages_fts, 0, ?, ?, '…', 24),
-                       bm25(messages_fts) * CASE WHEN m.is_sidechain THEN \(sidechainWeight) ELSE 1.0 END
-                FROM messages_fts
-                JOIN messages m ON m.id = messages_fts.rowid
-                LEFT JOIN sessions s ON s.id = m.session_id
-                WHERE messages_fts MATCH ? AND \(Store.firstCopy)
-                """
-            params += [marks.open, marks.close, match]
-            if let role = options.role { sql += " AND m.role = ?"; params.append(role) }
-            if let project = options.project { sql += " AND s.project LIKE ?"; params.append("%\(project)%") }
-            if let since = options.since { sql += " AND m.ts >= ?"; params.append(since) }
-            selects.append(sql)
+            var filter = "messages_fts MATCH ? AND \(Store.firstCopy)"
+            var filterParams: [SQLBindable?] = [match]
+            if let role = options.role { filter += " AND m.role = ?"; filterParams.append(role) }
+            if options.sidechainOnly { filter += " AND m.is_sidechain" }
+            if let project = options.project { filter += " AND s.project LIKE ?"; filterParams.append("%\(project)%") }
+            if let since = options.since { filter += " AND m.ts >= ?"; filterParams.append(since) }
+            let score = "bm25(messages_fts) * CASE WHEN m.is_sidechain THEN \(sidechainWeight) ELSE 1.0 END"
+            let title = "COALESCE(s.custom_title, s.ai_title, s.first_prompt)"
+
+            if options.groupByFile {
+                // FTS5 functions can't sit beside window functions, so score the matches first, keep each
+                // file's newest (or best) match, and fill in snippets once the page is known.
+                let pick = options.sort == .date ? "ts DESC, score, id" : "score, id"
+                prefix = """
+                    WITH matched AS MATERIALIZED (
+                        SELECT m.id, m.file_id, m.session_id, m.role, m.ts, m.is_sidechain, \(score) AS score
+                        FROM messages_fts
+                        JOIN messages m ON m.id = messages_fts.rowid
+                        LEFT JOIN sessions s ON s.id = m.session_id
+                        WHERE \(filter)
+                    )
+
+                    """
+                params += filterParams
+                selects.append("""
+                    SELECT 'message', g.id, g.session_id, g.role, g.ts, s.project, \(title), NULL, g.is_sidechain,
+                           NULL, g.score, g.file_id, g.n
+                    FROM (SELECT *, COUNT(*) OVER (PARTITION BY file_id) AS n,
+                                 ROW_NUMBER() OVER (PARTITION BY file_id ORDER BY \(pick)) AS rn
+                          FROM matched) g
+                    LEFT JOIN sessions s ON s.id = g.session_id
+                    WHERE g.rn = 1
+                    """)
+            } else {
+                selects.append("""
+                    SELECT 'message', m.id, m.session_id, m.role, m.ts, s.project, \(title), NULL, m.is_sidechain,
+                           snippet(messages_fts, 0, ?, ?, '…', 24), \(score), m.file_id, 1
+                    FROM messages_fts
+                    JOIN messages m ON m.id = messages_fts.rowid
+                    LEFT JOIN sessions s ON s.id = m.session_id
+                    WHERE \(filter)
+                    """)
+                params += [marks.open, marks.close] + filterParams
+            }
         }
 
-        if options.role == nil {
+        if options.role == nil, !options.messagesOnly {
             let lowKinds = lowKinds.map { "'\($0)'" }.joined(separator: ", ")
             var sql = """
                 SELECT 'doc', d.id, d.session_id, d.kind, d.ts, COALESCE(d.project, s.project),
                        d.title, d.path, 0,
                        snippet(docs_fts, -1, ?, ?, '…', 24),
-                       bm25(docs_fts, 4.0, 1.0) * CASE WHEN d.kind IN (\(lowKinds)) THEN \(lowKindWeight) ELSE 1.0 END
+                       bm25(docs_fts, 4.0, 1.0) * CASE WHEN d.kind IN (\(lowKinds)) THEN \(lowKindWeight) ELSE 1.0 END,
+                       NULL, 1
                 FROM docs_fts
                 JOIN docs d ON d.id = docs_fts.rowid
                 LEFT JOIN sessions s ON s.id = d.session_id
@@ -106,7 +166,7 @@ public enum Search {
             selects.append(sql)
         }
 
-        let sql = selects.joined(separator: "\nUNION ALL\n")
+        let sql = prefix + selects.joined(separator: "\nUNION ALL\n")
             // Row type and id break ties so pages don't overlap or skip rows.
             + (options.sort == .date ? "\nORDER BY 5 DESC, 11, 1, 2" : "\nORDER BY 11, 1, 2")
             + "\nLIMIT ? OFFSET ?"
@@ -120,6 +180,7 @@ public enum Search {
                 type: stmt.text(0) ?? "",
                 rowID: stmt.int64(1),
                 sessionID: stmt.text(2),
+                fileID: stmt.text(11) == nil ? nil : stmt.int64(11),
                 role: stmt.text(3) ?? "",
                 ts: stmt.text(4),
                 project: stmt.text(5),
@@ -127,8 +188,59 @@ public enum Search {
                 path: stmt.text(7),
                 sidechain: stmt.int(8) != 0,
                 snippet: stmt.text(9) ?? "",
-                score: stmt.double(10)))
+                score: stmt.double(10),
+                matches: stmt.int(12),
+                groupedByFile: options.groupByFile))
+        }
+
+        if options.groupByFile {
+            let ids = hits.filter { $0.type == "message" }.map(\.rowID)
+            let snippets = try messageSnippets(db: db, match: match, ids: ids, marks: marks)
+            hits = hits.map { hit in
+                guard hit.type == "message", let snippet = snippets[hit.rowID] else { return hit }
+                return hit.with(snippet: snippet)
+            }
         }
         return hits
+    }
+
+    private static func messageSnippets(db: Database, match: String, ids: [Int64],
+                                        marks: (open: String, close: String)) throws -> [Int64: String] {
+        guard !ids.isEmpty else { return [:] }
+        let list = ids.map(String.init).joined(separator: ",")
+        let stmt = try db.prepare("""
+            SELECT rowid, snippet(messages_fts, 0, ?, ?, '…', 24) FROM messages_fts
+            WHERE messages_fts MATCH ? AND rowid IN (\(list))
+            """)
+        try stmt.bind([marks.open, marks.close, match])
+        var snippets: [Int64: String] = [:]
+        while try stmt.step() { snippets[stmt.int64(0)] = stmt.text(1) ?? "" }
+        return snippets
+    }
+
+    /// Full text of each matching message in a transcript file, with matches wrapped in `marks`.
+    public static func markedMessages(db: Database, match: String, fileID: Int64,
+                                      marks: (open: String, close: String)) throws -> [Int64: String] {
+        guard !match.isEmpty else { return [:] }
+        let stmt = try db.prepare("""
+            SELECT rowid, highlight(messages_fts, 0, ?, ?) FROM messages_fts
+            WHERE messages_fts MATCH ? AND rowid IN (SELECT id FROM messages WHERE file_id = ?)
+            """)
+        try stmt.bind([marks.open, marks.close, match, fileID])
+        var marked: [Int64: String] = [:]
+        while try stmt.step() { marked[stmt.int64(0)] = stmt.text(1) ?? "" }
+        return marked
+    }
+
+    /// A doc's body with matches wrapped in `marks`, or nil when only the title matches.
+    public static func markedBody(db: Database, match: String, docID: Int64,
+                                  marks: (open: String, close: String)) throws -> String? {
+        guard !match.isEmpty else { return nil }
+        let stmt = try db.prepare("""
+            SELECT highlight(docs_fts, 1, ?, ?) FROM docs_fts WHERE docs_fts MATCH ? AND rowid = ?
+            """)
+        try stmt.bind([marks.open, marks.close, match, docID])
+        guard try stmt.step(), let body = stmt.text(0), body.contains(marks.open) else { return nil }
+        return body
     }
 }

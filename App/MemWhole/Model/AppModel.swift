@@ -1,44 +1,7 @@
 import AppKit
 import MemWholeKit
 import Observation
-
-/// Which slice of the index a search covers.
-enum Scope: String, CaseIterable, Identifiable {
-    case all, memory, skills, prompts, snapshots
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .all: "Everything"
-        case .memory: "Memory"
-        case .skills: "Skills"
-        case .prompts: "Prompt history"
-        case .snapshots: "File snapshots"
-        }
-    }
-
-    var kind: String? {
-        switch self {
-        case .memory: "memory"
-        case .skills: "skill"
-        case .prompts: "prompt"
-        case .snapshots: "snapshot"
-        default: nil
-        }
-    }
-}
-
-enum Detail: Sendable {
-    case session(Store.Session, [Store.Message], focus: Int64?)
-    case doc(Store.Doc)
-}
-
-/// Snippet highlight markers; `HitRow` turns them into bold text.
-enum Marks {
-    static let open = "\u{1}"
-    static let close = "\u{2}"
-}
+import SwiftUI
 
 @MainActor
 @Observable
@@ -51,10 +14,15 @@ final class AppModel {
     var isLoadingMore = false
     var selection: Hit.ID? { didSet { loadDetail() } }
     var detail: Detail?
+    /// Changes whenever a new detail loads, so its view (and its place among the matches) starts over.
+    var detailKey = ""
+    /// Set by Find… (⌘F) to move focus to the search field.
+    var isSearchFocused = false
 
     var isIndexing = false
     var progress = ""
     var status = ""
+    var counts: Store.Counts?
     var errorMessage: String?
 
     let databasePath = Store.defaultDatabasePath
@@ -73,10 +41,21 @@ final class AppModel {
 
     var hasIndex: Bool { FileManager.default.fileExists(atPath: databasePath) }
 
+    /// The sidebar's selection. A source list allows none, but a scope always applies.
+    var scopeSelection: Scope? {
+        get { scope }
+        set { if let newValue { scope = newValue } }
+    }
+
     @ObservationIgnored private var searchTask: Task<Void, Never>?
 
     init() {
         refreshStatus()
+    }
+
+    /// A checkmark binding for the View menu's scope items.
+    func isShowing(_ scope: Scope) -> Binding<Bool> {
+        Binding { self.scope == scope } set: { if $0 { self.scope = scope } }
     }
 
     // MARK: - Search
@@ -103,6 +82,8 @@ final class AppModel {
                 self.hits = hits
                 hasMore = hits.count == Self.pageSize
                 errorMessage = nil
+                // Grouped hits keep their id as the query changes; refresh the open file's highlights.
+                if let selection, hits.contains(where: { $0.id == selection }) { loadDetail() }
             case .failure(let error):
                 self.hits = []
                 errorMessage = "\(error)"
@@ -139,6 +120,10 @@ final class AppModel {
         options.limit = Self.pageSize
         options.offset = offset
         options.kind = scope.kind
+        options.messagesOnly = scope == .transcripts
+        // The Claude app already shows main conversations; only subagent transcripts are hidden.
+        options.sidechainOnly = true
+        options.groupByFile = true
         options.sort = sort
         return options
     }
@@ -156,21 +141,30 @@ final class AppModel {
             return
         }
         let path = databasePath
+        let match = Search.match(searchOptions(offset: 0))
+        let marks = (Marks.open, Marks.close)
+        let key = "\(id)|\(match)"
         Task {
             let loaded: Detail? = await Task.detached {
                 let db = try? Schema.open(path: path)
                 guard let db else { return nil }
                 if hit.type == "doc" {
-                    return (try? Store.doc(db: db, id: hit.rowID)).flatMap { $0.map(Detail.doc) }
+                    guard let doc = try? Store.doc(db: db, id: hit.rowID) else { return nil }
+                    let body = try? Search.markedBody(db: db, match: match, docID: doc.id, marks: marks)
+                    return .doc(doc, markedBody: body ?? nil)
                 }
-                guard let sessionID = hit.sessionID,
+                guard let sessionID = hit.sessionID, let fileID = hit.fileID,
                       let session = try? Store.sessions(db: db, idPrefix: sessionID).first,
-                      let messages = try? Store.messages(db: db, sessionID: sessionID, includeSidechain: hit.sidechain)
+                      let messages = try? Store.messages(db: db, fileID: fileID)
                 else { return nil }
-                return .session(session, messages, focus: hit.rowID)
+                let marked = (try? Search.markedMessages(db: db, match: match, fileID: fileID, marks: marks)) ?? [:]
+                return .session(session, messages, focus: hit.rowID, marked: marked)
             }.value
             // Ignore a slow load that finished after the selection moved on.
-            if selection == id { detail = loaded }
+            if selection == id {
+                detail = loaded
+                detailKey = key
+            }
         }
     }
 
@@ -235,6 +229,7 @@ final class AppModel {
                 reindex()
                 return
             }
+            self.counts = counts
             let messages = counts.messages.reduce(0) { $0 + $1.count }
             let docs = counts.docs.reduce(0) { $0 + $1.count }
             var parts = [
@@ -247,9 +242,20 @@ final class AppModel {
         }
     }
 
-    func revealInFinder(_ doc: Store.Doc) {
-        guard let folderPath else { return }
-        let url = URL(fileURLWithPath: folderPath).appendingPathComponent(doc.path)
+    // MARK: - Files and pasteboard
+
+    /// The file a doc path (relative to the indexed folder) points at, when there is one on disk.
+    func fileURL(forDocPath path: String?, kind: String?) -> URL? {
+        guard let folderPath, let path, kind != "prompt" else { return nil }
+        return URL(fileURLWithPath: folderPath).appendingPathComponent(path)
+    }
+
+    func reveal(_ url: URL) {
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    func copy(_ string: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(string, forType: .string)
     }
 }

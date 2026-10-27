@@ -84,6 +84,22 @@ public enum Store {
         return messages
     }
 
+    /// Every message in one transcript file, in order.
+    public static func messages(db: Database, fileID: Int64) throws -> [Message] {
+        let stmt = try db.prepare("""
+            SELECT m.id, m.role, m.ts, m.text, m.is_sidechain FROM messages m
+            WHERE m.file_id = ? ORDER BY m.ts, m.id
+            """)
+        try stmt.bind([fileID])
+        var messages: [Message] = []
+        while try stmt.step() {
+            messages.append(Message(
+                id: stmt.int64(0), role: stmt.text(1) ?? "", ts: stmt.text(2), text: stmt.text(3) ?? "",
+                sidechain: stmt.int(4) != 0))
+        }
+        return messages
+    }
+
     public static func doc(db: Database, id: Int64) throws -> Doc? {
         let stmt = try db.prepare("""
             SELECT d.id, d.kind, d.path, d.title, d.body, COALESCE(d.project, s.project), d.ts
