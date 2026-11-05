@@ -50,6 +50,7 @@ final class AppModel {
     init() {
         refreshStatus()
         scheduleSearch(recount: true)
+        reindex()
     }
 
     // MARK: - Search
@@ -219,11 +220,6 @@ final class AppModel {
         Task {
             let counts = await Task.detached { try? Store.counts(db: Schema.open(path: path)) }.value
             guard let counts else { return }
-            // Empty after a schema change (or a first run that was cut short): rebuild from the chosen folder.
-            if counts.files == 0, folderPath != nil, !isIndexing {
-                reindex()
-                return
-            }
             var parts = [
                 "\(counts.notes.formatted()) notes",
                 "\(counts.projects.formatted()) projects",
