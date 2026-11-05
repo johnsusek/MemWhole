@@ -235,16 +235,18 @@ final class AppModel {
 
     // MARK: - Trash
 
-    /// Notes just trashed whose rows are still playing the forget effect.
-    var forgetting: [Hit] = []
+    var canTrash: Bool { folderPath != nil && !isIndexing }
+    var canTrashSelection: Bool { selection != nil && canTrash }
 
-    var canTrashSelection: Bool { selection != nil && folderPath != nil && !isIndexing }
-
-    /// Moves the selected note to the Trash, drops its MEMORY.md pointer, and selects a neighbor.
+    /// Moves the selected note to the Trash.
     func trashSelection() {
-        guard canTrashSelection, let id = selection, let folderPath,
-              let row = hits.firstIndex(where: { $0.id == id }) else { return }
-        let hit = hits[row]
+        guard let id = selection, let hit = hits.first(where: { $0.id == id }) else { return }
+        trash(hit)
+    }
+
+    /// Moves a note to the Trash and drops its MEMORY.md pointer. A selected note hands the selection to a neighbor.
+    func trash(_ hit: Hit) {
+        guard canTrash, let folderPath, let row = hits.firstIndex(where: { $0.id == hit.id }) else { return }
         do {
             try Memories.trash(notePath: hit.path, in: URL(fileURLWithPath: folderPath))
         } catch {
@@ -254,21 +256,13 @@ final class AppModel {
             alert.runModal()
             return
         }
-        // The row's ghost blurs and crumbles to dust (see ForgetEffect) while the real row is hidden;
-        // once the ghost has started to crumble, the rows below close the gap.
-        let next = row + 1 < hits.count ? hits[row + 1].id : row > 0 ? hits[row - 1].id : nil
-        selection = next
-        forgetting.append(hit)
-        Task {
-            try? await Task.sleep(for: ForgetEffect.gapDelay)
-            withAnimation(.easeInOut(duration: 0.3)) {
-                hits.removeAll { $0.id == hit.id }
-                total = total.map { max($0 - 1, 0) }
-            }
-            reindex()
-            try? await Task.sleep(for: ForgetEffect.duration - ForgetEffect.gapDelay)
-            forgetting.removeAll { $0.id == hit.id }
+        if selection == hit.id {
+            selection = row + 1 < hits.count ? hits[row + 1].id : row > 0 ? hits[row - 1].id : nil
         }
+        // The list's own removal: the row fades and the rows below slide up.
+        withAnimation { _ = hits.remove(at: row) }
+        total = total.map { max($0 - 1, 0) }
+        reindex()
     }
 
     // MARK: - Files and pasteboard

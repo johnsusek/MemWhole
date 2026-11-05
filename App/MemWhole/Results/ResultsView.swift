@@ -4,8 +4,6 @@ import SwiftUI
 /// Notes the current search finds, newest or best first.
 struct ResultsView: View {
     @Environment(AppModel.self) private var model
-    /// Where each row sits in the window, so a trashed row's ghost can be drawn over it.
-    @State private var frames = RowFrames()
 
     var body: some View {
         @Bindable var model = model
@@ -13,8 +11,10 @@ struct ResultsView: View {
         List(selection: $model.selection) {
             ForEach(model.hits) { hit in
                 HitRow(hit: hit)
-                    .opacity(model.forgetting.contains { $0.id == hit.id } ? 0 : 1)
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frames.rows[hit.id] = $0 }
+                    .swipeActions(edge: .trailing) {
+                        Button("Move to Trash", systemImage: "trash", role: .destructive) { model.trash(hit) }
+                            .disabled(!model.canTrash)
+                    }
             }
             if model.hasMore { loadMoreRow }
         }
@@ -23,8 +23,6 @@ struct ResultsView: View {
                 HitActions(hit: hit)
             }
         }
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frames.list = $0 }
-        .overlay(alignment: .topLeading) { forgettingRows }
         .overlay { emptyState }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if model.isIndexing { IndexStatusView() }
@@ -57,18 +55,6 @@ struct ResultsView: View {
         guard let count = model.total else { return "" }
         let noun = model.query.isBlank ? "note" : "result"
         return count == 1 ? "1 \(noun)" : "\(count.formatted()) \(noun)s"
-    }
-
-    private var forgettingRows: some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(model.forgetting) { hit in
-                if let frame = frames.rows[hit.id] {
-                    ForgetEffect(hit: hit, size: frame.size)
-                        .offset(x: frame.minX - frames.list.minX, y: frame.minY - frames.list.minY)
-                }
-            }
-        }
-        .allowsHitTesting(false)
     }
 
     @ViewBuilder
@@ -110,8 +96,3 @@ struct ResultsView: View {
     }
 }
 
-/// Row and list frames, kept out of observation so scrolling doesn't re-render the list.
-private final class RowFrames {
-    var rows: [Hit.ID: CGRect] = [:]
-    var list = CGRect.zero
-}
