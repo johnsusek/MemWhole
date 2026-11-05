@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		074EA0A29E59B2DD97923277 /* View+SearchFocused.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62B5F94B70305278D7F46203 /* View+SearchFocused.swift */; };
 		2295C32F27BDEF17C646B33C /* MatchBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A09A13267C007FDD145726D9 /* MatchBar.swift */; };
+		3EE1D68626213F53546AE76C /* NoteTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE0B26A0D0B2D94FFB773EFA /* NoteTextView.swift */; };
 		3F6472058C25BF071E1544D1 /* IndexStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA6F32D5F914C7E5B91A2FEE /* IndexStatusView.swift */; };
 		4108885449E6DBBFAC96F613 /* MemWholeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 029C411204BF37E71A20200F /* MemWholeApp.swift */; };
 		448C80B349D19445AD2A1091 /* AppCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F79A3A6EB786F3BC5FF9F7D /* AppCommands.swift */; };
@@ -19,7 +20,6 @@
 		849EAD5DCB5BAF0FB6062638 /* HitActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66DE3B8879F6F574EAC0012A /* HitActions.swift */; };
 		86F69CD17F62C2CF12ECD73B /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46854DE8FE9D7449203728BB /* SettingsView.swift */; };
 		B3E0A09D34CCADD72887EBCE /* ResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CECFA5DEAA68F9557ED1D4F /* ResultsView.swift */; };
-		B45666222855F824ECE9CFDA /* Occurrence.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3FE77EC19B505CDF24DBBBE /* Occurrence.swift */; };
 		C0999AF73BAAEC4D9E4FAF61 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2A61B822EAA9697C0B2CE5C /* ContentView.swift */; };
 		C1F5A840A6397391E87C995E /* MemWholeKit in Frameworks */ = {isa = PBXBuildFile; productRef = C357FAC29DCE6126B855D581 /* MemWholeKit */; };
 		C7C51561DF73C4ACB77DD24E /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7525AC8FDBBF48BD70C283F /* AppModel.swift */; };
@@ -42,8 +42,8 @@
 		A2A61B822EAA9697C0B2CE5C /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		B7525AC8FDBBF48BD70C283F /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		CA6F32D5F914C7E5B91A2FEE /* IndexStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexStatusView.swift; sourceTree = "<group>"; };
-		D3FE77EC19B505CDF24DBBBE /* Occurrence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Occurrence.swift; sourceTree = "<group>"; };
 		E6E74C8240EC6739367ABF58 /* DetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailView.swift; sourceTree = "<group>"; };
+		EE0B26A0D0B2D94FFB773EFA /* NoteTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteTextView.swift; sourceTree = "<group>"; };
 		F7E17471C0C7FEA42D37F5DE /* HitRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HitRow.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -113,8 +113,8 @@
 			children = (
 				E6E74C8240EC6739367ABF58 /* DetailView.swift */,
 				A09A13267C007FDD145726D9 /* MatchBar.swift */,
+				EE0B26A0D0B2D94FFB773EFA /* NoteTextView.swift */,
 				089320C3DD30251D855C5618 /* NoteView.swift */,
-				D3FE77EC19B505CDF24DBBBE /* Occurrence.swift */,
 			);
 			path = Detail;
 			sourceTree = "<group>";
@@ -229,8 +229,8 @@
 				2295C32F27BDEF17C646B33C /* MatchBar.swift in Sources */,
 				464320B49F034386833B2F8E /* MatchCursor.swift in Sources */,
 				4108885449E6DBBFAC96F613 /* MemWholeApp.swift in Sources */,
+				3EE1D68626213F53546AE76C /* NoteTextView.swift in Sources */,
 				4F23C00625D0C841E54D7B51 /* NoteView.swift in Sources */,
-				B45666222855F824ECE9CFDA /* Occurrence.swift in Sources */,
 				B3E0A09D34CCADD72887EBCE /* ResultsView.swift in Sources */,
 				86F69CD17F62C2CF12ECD73B /* SettingsView.swift in Sources */,
 				074EA0A29E59B2DD97923277 /* View+SearchFocused.swift in Sources */,

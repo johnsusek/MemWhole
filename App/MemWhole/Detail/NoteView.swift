@@ -3,27 +3,17 @@ import SwiftUI
 
 struct NoteView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let note: Store.Note
-    /// Runs of body lines, split up so the view can scroll to a match. Only built when the body has matches.
-    private let blocks: [(id: Int64, marked: String)]
-    private let occurrences: [Occurrence]
+    private let rendered: RenderedNote
     @State private var current = 0
-
-    private static let linesPerBlock = 40
 
     init(note: Store.Note, markedBody: String?) {
         self.note = note
-        let lines = markedBody.map { $0.split(separator: "\n", omittingEmptySubsequences: false) } ?? []
-        blocks = stride(from: 0, to: lines.count, by: Self.linesPerBlock).map { start in
-            let end = Swift.min(start + Self.linesPerBlock, lines.count)
-            return (Int64(start), lines[start..<end].joined(separator: "\n"))
-        }
-        occurrences = [Occurrence](blocks: blocks.map { ($0.id, $0.marked) })
+        rendered = NoteRenderer.render(markedBody ?? note.body, marks: (Marks.open, Marks.close))
     }
 
     private var cursor: MatchCursor? {
-        occurrences.isEmpty ? nil : MatchCursor(count: occurrences.count, current: $current)
+        rendered.matches.isEmpty ? nil : MatchCursor(count: rendered.matches.count, current: $current)
     }
 
     private var fileURL: URL? {
@@ -31,32 +21,14 @@ struct NoteView: View {
     }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    header
-                    Divider()
-                    if blocks.isEmpty {
-                        bodyText(Text(note.body))
-                    } else {
-                        // No spacing, so the blocks read as one continuous text.
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(blocks, id: \.id) { block in
-                                let ordinal = occurrences.indices.contains(current) && occurrences[current].block == block.id
-                                    ? occurrences[current].ordinal : nil
-                                bodyText(Text(highlightedMatches(block.marked, current: ordinal)))
-                                    .id(block.id)
-                            }
-                        }
-                    }
-                }
-                .padding(20)
-            }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if let cursor { MatchBar(cursor: cursor) }
-            }
-            .onAppear { scroll(proxy, animated: false) }
-            .onChange(of: current) { scroll(proxy, animated: true) }
+        VStack(spacing: 0) {
+            if let cursor { MatchBar(cursor: cursor) }
+            header
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+            Divider()
+            NoteTextView(rendered: rendered, current: current)
         }
         .focusedSceneValue(\.matchCursor, cursor)
         .toolbar {
@@ -85,22 +57,4 @@ struct NoteView: View {
             Text(note.path).font(.caption.monospaced()).foregroundStyle(.tertiary).textSelection(.enabled)
         }
     }
-
-    private func bodyText(_ text: Text) -> some View {
-        text
-            .font(.body)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func scroll(_ proxy: ScrollViewProxy, animated: Bool) {
-        guard occurrences.indices.contains(current) else { return }
-        let block = occurrences[current].block
-        if animated, !reduceMotion {
-            withAnimation { proxy.scrollTo(block, anchor: .center) }
-        } else {
-            proxy.scrollTo(block, anchor: .center)
-        }
-    }
-
 }

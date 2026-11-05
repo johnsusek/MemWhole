@@ -5,10 +5,6 @@ enum Marks {
     static let open = "\u{1}"
     static let close = "\u{2}"
 
-    static func count(in marked: some StringProtocol) -> Int {
-        marked.components(separatedBy: open).count - 1
-    }
-
     /// The text without markers, with `style` applied to each match along with its order in the text.
     static func attributed(_ marked: some StringProtocol, style: (inout AttributedString, Int) -> Void) -> AttributedString {
         var result = AttributedString()

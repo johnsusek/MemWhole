@@ -8,9 +8,13 @@ let package = Package(
         .executable(name: "memwhole", targets: ["memwhole"]),
         .library(name: "MemWholeKit", targets: ["MemWholeKit"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/swiftlang/swift-markdown", from: "0.9.0"),
+    ],
     targets: [
         .target(
             name: "MemWholeKit",
+            dependencies: [.product(name: "Markdown", package: "swift-markdown")],
             linkerSettings: [.linkedLibrary("sqlite3")]
         ),
         .executableTarget(

@@ -187,3 +187,42 @@ private struct Fixture {
         #expect(index == "- [Gone](gone.md) — missing\n")
     }
 }
+
+@Suite struct NoteRendererTests {
+  private let marks = (open: "\u{1}", close: "\u{2}")
+
+  private func rendered(_ source: String) -> RenderedNote { NoteRenderer.render(source, marks: marks) }
+
+  @Test func dropsFrontmatterAndMarkup() {
+    let note = rendered("---\nname: x\n---\n\n# Title\n\nSome **bold** and `code` words\nwrapped.\n\n- one\n- two\n")
+    #expect(note.text.string == "Title\nSome bold and code words wrapped.\n\u{2022}\tone\n\u{2022}\ttwo")
+  }
+
+  @Test func matchesLandOnTheRenderedText() {
+    let note = rendered("# \u{1}alpha\u{2}\n\nSee **\u{1}beta\u{2}** and `\u{1}gamma\u{2}`.\n\n```\n\u{1}delta\u{2}\n```\n")
+    let found = note.matches.map { (note.text.string as NSString).substring(with: $0) }
+    #expect(found == ["alpha", "beta", "gamma", "delta"])
+    #expect(!note.text.string.contains("\u{1}"))
+    #expect(!note.text.string.contains("\u{2}"))
+  }
+
+  @Test func aMatchInAHiddenURLIsDropped() {
+    let note = rendered("[docs](https://\u{1}example\u{2}.com) and https://\u{1}example\u{2}.org/page\n")
+    #expect(note.text.string == "docs and https://example.org/page")
+    #expect(note.matches == [NSRange(location: 17, length: 7)])
+    #expect(note.text.attribute(.link, at: 0, effectiveRange: nil) as? URL == URL(string: "https://example.com"))
+  }
+
+  @Test func onlyWebLinksAreClickable() {
+    let web = rendered("[a](https://example.com)")
+    let local = rendered("[a](file:///Applications/Calculator.app)")
+    #expect(web.text.attribute(.link, at: 0, effectiveRange: nil) as? URL == URL(string: "https://example.com"))
+    #expect(local.text.attribute(.link, at: 0, effectiveRange: nil) == nil)
+  }
+
+  @Test func tablesLineUp() {
+    let note = rendered("| a | bee |\n|---|---|\n| \u{1}cc\u{2} | d |\n")
+    #expect(note.text.string == "a   bee\ncc  d  ")
+    #expect(note.matches == [NSRange(location: 8, length: 2)])
+  }
+}
