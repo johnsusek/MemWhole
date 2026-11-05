@@ -15,11 +15,14 @@ public enum Format {
         return formatter
     }()
 
+    public static func parse(_ iso: String?) -> Date? {
+        guard let iso else { return nil }
+        return isoParser.date(from: iso) ?? isoParserNoFraction.date(from: iso)
+    }
+
     public static func date(_ iso: String?) -> String {
         guard let iso else { return "" }
-        guard let date = isoParser.date(from: iso) ?? isoParserNoFraction.date(from: iso) else {
-            return String(iso.prefix(16))
-        }
+        guard let date = parse(iso) else { return String(iso.prefix(16)) }
         return local.string(from: date)
     }
 

@@ -2,7 +2,6 @@ import MemWholeKit
 import SwiftUI
 
 struct NoteView: View {
-    @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let note: Store.Note
     /// Runs of body lines, split up so the view can scroll to a match. Only built when the body has matches.
@@ -24,10 +23,6 @@ struct NoteView: View {
 
     private var cursor: MatchCursor? {
         occurrences.isEmpty ? nil : MatchCursor(count: occurrences.count, current: $current)
-    }
-
-    private var fileURL: URL? {
-        model.fileURL(forNotePath: note.path)
     }
 
     var body: some View {
@@ -59,25 +54,13 @@ struct NoteView: View {
             .onChange(of: current) { scroll(proxy, animated: true) }
         }
         .focusedSceneValue(\.matchCursor, cursor)
-        .toolbar {
-            ToolbarItem {
-                Button("Show in Finder", systemImage: "folder") {
-                    if let fileURL { model.reveal(fileURL) }
-                }
-                .disabled(fileURL == nil)
-                .help("Show this file in Finder")
-            }
-            ToolbarItem {
-                Button("Move to Trash", systemImage: "trash") { model.trashSelection() }
-                    .disabled(!model.canTrashSelection)
-                    .help("Move this note to the Trash (⌘⌫)")
-            }
-        }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(Format.date(note.ts)).font(.caption).foregroundStyle(.secondary)
+            Text(Format.parse(note.ts)?.formatted(date: .long, time: .shortened) ?? Format.date(note.ts))
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Text(note.title ?? note.path).font(.title2.weight(.semibold)).textSelection(.enabled)
             if let project = note.project {
                 Label(Format.path(project), systemImage: "folder").font(.caption).foregroundStyle(.secondary)

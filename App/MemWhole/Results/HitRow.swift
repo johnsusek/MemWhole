@@ -9,18 +9,22 @@ struct HitRow: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(Format.oneLine(hit.title ?? hit.path)).font(.headline).lineLimit(1)
                 Spacer()
-                Text(Format.date(hit.ts)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                Text(date).font(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
             Text(highlighted(Format.oneLine(hit.snippet)))
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                .lineLimit(3)
+                .lineLimit(2)
             if let project = hit.project {
-                Text(Format.path(project)).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                Text(Format.path(project)).font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
             }
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
+    }
+
+    private var date: String {
+        Format.parse(hit.ts)?.formatted(date: .abbreviated, time: .omitted) ?? Format.date(hit.ts)
     }
 
     /// Bolds the text between FTS5 snippet markers.

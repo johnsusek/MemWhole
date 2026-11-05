@@ -14,7 +14,8 @@ struct ContentView: View {
             DetailView()
         }
         .searchable(text: $model.query, placement: .toolbar, prompt: "Search memories")
-        .searchFocusedIfAvailable($isSearchFocused)
+        .searchFocused($isSearchFocused)
+        .toolbar(id: "main") { MainToolbar(model: model) }
         .onChange(of: model.isSearchFocused) { _, focused in
             isSearchFocused = focused
         }
