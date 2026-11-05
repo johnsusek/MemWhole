@@ -7,11 +7,21 @@ import SwiftUI
 @Observable
 final class AppModel {
     var query = "" { didSet { scheduleSearch(recount: true) } }
-    var sort = SearchSort.date { didSet { scheduleSearch() } }
+    var sort = SearchSort(rawValue: UserDefaults.standard.string(forKey: "sort") ?? "") ?? .date {
+        didSet {
+            UserDefaults.standard.set(sort.rawValue, forKey: "sort")
+            scheduleSearch()
+        }
+    }
     var hits: [Hit] = []
     var hasMore = false
     var isLoadingMore = false
-    var selection: Hit.ID? { didSet { loadDetail() } }
+    var selection: Hit.ID? {
+        didSet {
+            UserDefaults.standard.set(selection, forKey: "selection")
+            loadDetail()
+        }
+    }
     var note: Store.Note?
     /// The open note's body with matches between `Marks`, or nil when the body has none.
     var markedBody: String?
@@ -48,9 +58,12 @@ final class AppModel {
     @ObservationIgnored private var countsAreStale = true
 
     init() {
+        selection = UserDefaults.standard.object(forKey: "selection") as? Hit.ID
+        loadDetail()
         refreshStatus()
         scheduleSearch(recount: true)
         reindex()
+        watchSearchKeys()
     }
 
     // MARK: - Search
@@ -116,6 +129,13 @@ final class AppModel {
                 errorMessage = "\(error)"
             }
         }
+    }
+
+    /// Moves the selection along the results; with none, starts from the matching end.
+    func moveSelection(by offset: Int) {
+        guard !hits.isEmpty else { return }
+        let row = hits.firstIndex { $0.id == selection }.map { $0 + offset } ?? (offset > 0 ? 0 : hits.count - 1)
+        selection = hits[min(max(row, 0), hits.count - 1)].id
     }
 
     private func searchOptions(offset: Int) -> SearchOptions {
@@ -236,8 +256,7 @@ final class AppModel {
 
     /// Moves the selected note to the Trash.
     func trashSelection() {
-        guard let id = selection, let hit = hits.first(where: { $0.id == id }) else { return }
-        trash(hit)
+        if let selectedHit { trash(selectedHit) }
     }
 
     /// Moves a note to the Trash and drops its MEMORY.md pointer. A selected note hands the selection to a neighbor.
@@ -256,17 +275,26 @@ final class AppModel {
             selection = row + 1 < hits.count ? hits[row + 1].id : row > 0 ? hits[row - 1].id : nil
         }
         // The list's own removal: the row fades and the rows below slide up.
-        withAnimation { _ = hits.remove(at: row) }
+        withAnimation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .default) {
+            _ = hits.remove(at: row)
+        }
         total = total.map { max($0 - 1, 0) }
         reindex()
     }
 
     // MARK: - Files and pasteboard
 
+    var selectedHit: Hit? { hits.first { $0.id == selection } }
+    var selectedFileURL: URL? { selectedHit.flatMap { fileURL(forNotePath: $0.path) } }
+
     /// The file a note path (relative to the indexed folder) points at.
     func fileURL(forNotePath path: String) -> URL? {
         guard let folderPath else { return nil }
         return URL(fileURLWithPath: folderPath).appendingPathComponent(path)
+    }
+
+    func open(_ url: URL) {
+        NSWorkspace.shared.open(url)
     }
 
     func reveal(_ url: URL) {

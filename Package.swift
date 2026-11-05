@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "MemWhole",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v15)],
     products: [
         .executable(name: "memwhole", targets: ["memwhole"]),
         .library(name: "MemWholeKit", targets: ["MemWholeKit"]),

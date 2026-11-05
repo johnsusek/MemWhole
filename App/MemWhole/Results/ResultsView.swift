@@ -8,19 +8,34 @@ struct ResultsView: View {
     var body: some View {
         @Bindable var model = model
 
-        List(selection: $model.selection) {
-            ForEach(model.hits) { hit in
-                HitRow(hit: hit)
-                    .swipeActions(edge: .trailing) {
-                        Button("Move to Trash", systemImage: "trash", role: .destructive) { model.trash(hit) }
-                            .disabled(!model.canTrash)
-                    }
+        ScrollViewReader { proxy in
+            List(selection: $model.selection) {
+                ForEach(model.hits) { hit in
+                    HitRow(hit: hit)
+                        .onDrag {
+                            model.fileURL(forNotePath: hit.path).flatMap(NSItemProvider.init(contentsOf:)) ?? NSItemProvider()
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button("Move to Trash", systemImage: "trash", role: .destructive) { model.trash(hit) }
+                                .disabled(!model.canTrash)
+                        }
+                }
+                if model.hasMore { loadMoreRow }
             }
-            if model.hasMore { loadMoreRow }
-        }
-        .contextMenu(forSelectionType: Hit.ID.self) { ids in
-            if let id = ids.first, let hit = model.hits.first(where: { $0.id == id }) {
-                HitActions(hit: hit)
+            .contextMenu(forSelectionType: Hit.ID.self) { ids in
+                if let id = ids.first, let hit = model.hits.first(where: { $0.id == id }) {
+                    HitActions(hit: hit)
+                }
+            } primaryAction: { ids in
+                if let id = ids.first, let hit = model.hits.first(where: { $0.id == id }),
+                   let url = model.fileURL(forNotePath: hit.path) {
+                    model.open(url)
+                }
+            }
+            .onCopyCommand { model.note.map { [NSItemProvider(object: $0.body as NSString)] } ?? [] }
+            // Selection can move from the search field, where the list doesn't follow it by itself.
+            .onChange(of: model.selection) { _, id in
+                if let id { proxy.scrollTo(id) }
             }
         }
         .overlay { emptyState }
@@ -30,25 +45,6 @@ struct ResultsView: View {
         .navigationTitle("Memories")
         .navigationSubtitle(subtitle)
         .navigationSplitViewColumnWidth(min: 300, ideal: 380, max: 560)
-        .toolbar {
-            ToolbarItem {
-                Menu("Sort", systemImage: "arrow.up.arrow.down") {
-                    Picker("Sort Results By", selection: $model.sort) {
-                        Text("Newest First").tag(SearchSort.date)
-                        Text("Best Match").tag(SearchSort.relevance)
-                    }
-                    .pickerStyle(.inline)
-                }
-                .help("Sort results")
-            }
-            ToolbarItem {
-                Button("Update Index", systemImage: "arrow.clockwise") {
-                    model.folderPath == nil ? model.chooseFolderAndIndex() : model.reindex()
-                }
-                .disabled(model.isIndexing)
-                .help(model.folderPath.map { "Update the index of \(Format.path($0)) (⌘R)" } ?? "Choose a folder to index")
-            }
-        }
     }
 
     private var subtitle: String {
@@ -63,7 +59,7 @@ struct ResultsView: View {
             ContentUnavailableView {
                 Label("No Index Yet", systemImage: "tray")
             } description: {
-                Text("Choose your ~/.claude folder, or a copy of it, to build a search index.")
+                Text("Choose your ~/.claude folder.")
             } actions: {
                 Button("Choose Folder…") { model.chooseFolderAndIndex() }
                     .buttonStyle(.borderedProminent)

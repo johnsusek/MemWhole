@@ -8,8 +8,7 @@ struct DetailView: View {
             NoteView(note: note, markedBody: model.markedBody)
                 .id(model.detailKey)
         } else {
-            ContentUnavailableView("No Selection", systemImage: "text.magnifyingglass",
-                                   description: Text("Pick a note to read it in full."))
+            ContentUnavailableView("No Selection", systemImage: "text.magnifyingglass")
         }
     }
 }
