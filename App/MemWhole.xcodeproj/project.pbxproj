@@ -16,7 +16,6 @@
 		492B5D2B6B7027728A1A0CAF /* HitRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7E17471C0C7FEA42D37F5DE /* HitRow.swift */; };
 		4F23C00625D0C841E54D7B51 /* NoteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 089320C3DD30251D855C5618 /* NoteView.swift */; };
 		5CD5007755DA02824149C6AA /* Marks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61DF539AE306658D060211C1 /* Marks.swift */; };
-		7BFE7BDEC2798E6D7BA4F8B5 /* ForgetEffect.swift in Sources */ = {isa = PBXBuildFile; fileRef = 035C04444DC298D1FFC23768 /* ForgetEffect.swift */; };
 		849EAD5DCB5BAF0FB6062638 /* HitActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66DE3B8879F6F574EAC0012A /* HitActions.swift */; };
 		86F69CD17F62C2CF12ECD73B /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46854DE8FE9D7449203728BB /* SettingsView.swift */; };
 		B3E0A09D34CCADD72887EBCE /* ResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CECFA5DEAA68F9557ED1D4F /* ResultsView.swift */; };
@@ -29,7 +28,6 @@
 
 /* Begin PBXFileReference section */
 		029C411204BF37E71A20200F /* MemWholeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemWholeApp.swift; sourceTree = "<group>"; };
-		035C04444DC298D1FFC23768 /* ForgetEffect.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgetEffect.swift; sourceTree = "<group>"; };
 		089320C3DD30251D855C5618 /* NoteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteView.swift; sourceTree = "<group>"; };
 		3577590C309DDB7DCA65E50A /* MemWhole.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MemWhole.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		46854DE8FE9D7449203728BB /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -64,7 +62,6 @@
 		0B61E162C9E529AB25E96960 /* Results */ = {
 			isa = PBXGroup;
 			children = (
-				035C04444DC298D1FFC23768 /* ForgetEffect.swift */,
 				66DE3B8879F6F574EAC0012A /* HitActions.swift */,
 				F7E17471C0C7FEA42D37F5DE /* HitRow.swift */,
 				CA6F32D5F914C7E5B91A2FEE /* IndexStatusView.swift */,
@@ -225,7 +222,6 @@
 				C7C51561DF73C4ACB77DD24E /* AppModel.swift in Sources */,
 				C0999AF73BAAEC4D9E4FAF61 /* ContentView.swift in Sources */,
 				CE737BF802F386CC2EDCE53A /* DetailView.swift in Sources */,
-				7BFE7BDEC2798E6D7BA4F8B5 /* ForgetEffect.swift in Sources */,
 				849EAD5DCB5BAF0FB6062638 /* HitActions.swift in Sources */,
 				492B5D2B6B7027728A1A0CAF /* HitRow.swift in Sources */,
 				3F6472058C25BF071E1544D1 /* IndexStatusView.swift in Sources */,

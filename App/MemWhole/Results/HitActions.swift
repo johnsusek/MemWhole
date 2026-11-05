@@ -16,10 +16,7 @@ struct HitActions: View {
             Button("Show in Finder") { model.reveal(url) }
         }
         Divider()
-        Button("Move to Trash") {
-            model.selection = hit.id
-            model.trashSelection()
-        }
-        .disabled(model.folderPath == nil || model.isIndexing)
+        Button("Move to Trash") { model.trash(hit) }
+            .disabled(!model.canTrash)
     }
 }
