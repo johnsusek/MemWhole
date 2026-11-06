@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import Testing
 @testable import MemWholeKit
 
@@ -235,5 +235,33 @@ private struct Fixture {
     let note = rendered("| a | bee |\n|---|---|\n| \u{1}cc\u{2} | d |\n")
     #expect(note.text.string == "a   bee\ncc  d  ")
     #expect(note.matches == [NSRange(location: 8, length: 2)])
+  }
+
+  @Test func inlineCodeShadeStopsAtTheFontHeight() throws {
+    let text = NSMutableAttributedString(attributedString: rendered("run `code` now\n\nnext").text)
+    let code = (text.string as NSString).range(of: "code")
+    text.addAttribute(.inlineCodeBackground, value: NSColor.red, range: code)
+
+    let storage = NSTextStorage(attributedString: text)
+    let layout = InlineCodeLayoutManager()
+    let container = NSTextContainer(size: NSSize(width: 300, height: 300))
+    container.lineFragmentPadding = 0
+    storage.addLayoutManager(layout)
+    layout.addTextContainer(container)
+    layout.ensureLayout(for: container)
+
+    let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 300, pixelsHigh: 300, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+    layout.drawBackground(forGlyphRange: layout.glyphRange(for: container), at: .zero)
+    NSGraphicsContext.current?.flushGraphics()
+    NSGraphicsContext.current = nil
+
+    let glyphs = layout.glyphRange(forCharacterRange: code, actualCharacterRange: nil)
+    let line = layout.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
+    let column = Int(layout.boundingRect(forGlyphRange: glyphs, in: container).midX)
+    let shaded = (0..<300).filter { (bitmap.colorAt(x: column, y: $0)?.alphaComponent ?? 0) > 0.5 }.count
+    let font = try #require(text.attribute(.font, at: code.location, effectiveRange: nil) as? NSFont)
+    #expect(abs(CGFloat(shaded) - (font.ascender - font.descender)) <= 1)
+    #expect(CGFloat(shaded) < line.height - 5)
   }
 }

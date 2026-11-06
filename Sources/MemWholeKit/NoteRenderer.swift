@@ -238,7 +238,7 @@ public enum NoteRenderer {
     if style.isItalic { traits.insert(.italic) }
     font = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(traits), size: font.pointSize) ?? font
     var result: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: style.isSecondary ? NSColor.secondaryLabelColor : NSColor.labelColor]
-    if style.isCode { result[.backgroundColor] = NSColor.quaternarySystemFill }
+    if style.isCode { result[.inlineCodeBackground] = NSColor.quaternarySystemFill }
     if style.isStruck { result[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
     if let link = style.link { result[.link] = link }
     return result

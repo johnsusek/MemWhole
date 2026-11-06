@@ -46,6 +46,7 @@ struct NoteBody: NSViewRepresentable {
 
   func makeNSView(context: Context) -> CardTextView {
     let textView = CardTextView(usingTextLayoutManager: false)
+    textView.textContainer?.replaceLayoutManager(InlineCodeLayoutManager())
     textView.isEditable = false
     textView.drawsBackground = false
     textView.textContainerInset = .zero
