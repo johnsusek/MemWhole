@@ -9,9 +9,9 @@ struct MemWholeApp: App {
         Window("MemWhole", id: "main") {
             ContentView()
                 .environment(model)
-                .frame(minWidth: 720, minHeight: 440)
+                .frame(minWidth: 480, minHeight: 440)
         }
-        .defaultSize(width: 1280, height: 800)
+        .defaultSize(width: 860, height: 800)
         .commands { AppCommands(model: model) }
 
         Settings {

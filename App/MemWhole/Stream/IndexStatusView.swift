@@ -1,7 +1,7 @@
 import MemWholeKit
 import SwiftUI
 
-/// Results list footer shown while indexing, with its progress.
+/// Footer shown while indexing, with its progress.
 struct IndexStatusView: View {
     @Environment(AppModel.self) private var model
 

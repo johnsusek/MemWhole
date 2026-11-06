@@ -16,17 +16,17 @@ final class AppModel {
     var hits: [Hit] = []
     var hasMore = false
     var isLoadingMore = false
-    var selection: Hit.ID? {
-        didSet {
-            UserDefaults.standard.set(selection, forKey: "selection")
-            loadDetail()
-        }
-    }
-    var note: Store.Note?
-    /// The open note's body with matches between `Marks`, or nil when the body has none.
-    var markedBody: String?
-    /// Changes whenever a new note loads, so its view (and its place among the matches) starts over.
-    var detailKey = ""
+    var selection: Hit.ID? { didSet { currentMatch = 0 } }
+    /// The selected card's place among its matches.
+    var currentMatch = 0
+    /// Set to scroll the current match into view; the card clears it once it has.
+    var revealsMatch = false
+    /// A card to bring into view, or `streamEnd`; the stream clears it once it has.
+    var revealTarget: Hit.ID?
+    /// The card whose context menu is open.
+    var menuTarget: Hit.ID?
+    /// Whether the stream's window is the active one, for its key handling.
+    var isStreamActive = false
     /// Set by Find… (⌘F) to move focus to the search field.
     var isSearchFocused = false
 
@@ -56,20 +56,23 @@ final class AppModel {
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     /// Set when the query or index changes, until a search brings back fresh counts.
     @ObservationIgnored private var countsAreStale = true
+    /// The query and sort on screen, to tell a new search from a refresh of the same one.
+    @ObservationIgnored private var shownSearch: String?
+    @ObservationIgnored private var renderings: [Hit.ID: (body: String, rendered: RenderedNote)] = [:]
 
     init() {
-        selection = UserDefaults.standard.object(forKey: "selection") as? Hit.ID
-        loadDetail()
         refreshStatus()
         scheduleSearch(recount: true)
         reindex()
-        watchSearchKeys()
+        watchArrowKeys()
     }
 
     // MARK: - Search
 
-    /// Results fetched per page; more load as the list scrolls to the end.
+    /// Results fetched per page; more load as the stream scrolls back to its start.
     static let pageSize = 200
+    /// `revealTarget`'s id for the bottom of the stream.
+    static let streamEnd: Hit.ID = -1
 
     /// Fetches the first page for the current query; a blank query lists every note.
     /// The total depends only on the query and the index, so sort changes skip it.
@@ -84,6 +87,7 @@ final class AppModel {
             return
         }
         let request = searchOptions(offset: 0)
+        let search = "\(sort)|\(query)"
         searchTask = Task {
             try? await Task.sleep(for: .milliseconds(120))
             guard !Task.isCancelled else { return }
@@ -98,8 +102,9 @@ final class AppModel {
                 }
                 hasMore = hits.count == Self.pageSize
                 errorMessage = nil
-                // A note keeps its id as the query changes; refresh the open note's highlights.
-                if let selection, hits.contains(where: { $0.id == selection }) { loadDetail() }
+                if selectedHit == nil { selection = nil }
+                if search != shownSearch { showNewResults() }
+                shownSearch = search
             case .failure(let error):
                 self.hits = []
                 total = nil
@@ -131,11 +136,53 @@ final class AppModel {
         }
     }
 
-    /// Moves the selection along the results; with none, starts from the matching end.
+    /// A new search lands on the selected card's first match, or at the bottom of the stream.
+    private func showNewResults() {
+        currentMatch = 0
+        revealTarget = selection ?? Self.streamEnd
+        revealsMatch = selectedHit.map { !rendering(of: $0).matches.isEmpty } ?? false
+    }
+
+    /// Moves the selection down or up the stream; with none, starts at the bottom.
     func moveSelection(by offset: Int) {
         guard !hits.isEmpty else { return }
-        let row = hits.firstIndex { $0.id == selection }.map { $0 + offset } ?? (offset > 0 ? 0 : hits.count - 1)
+        // `hits` run newest first and the stream runs newest last, so moving down goes back through them.
+        let row = hits.firstIndex { $0.id == selection }.map { $0 - offset } ?? 0
         selection = hits[min(max(row, 0), hits.count - 1)].id
+        revealTarget = selection
+    }
+
+    /// Steps through the selected card's matches, then on to the next card with any, wrapping around the stream.
+    func stepMatch(by delta: Int) {
+        guard !hits.isEmpty else { return }
+        let selected = hits.firstIndex { $0.id == selection }
+
+        if let selected, rendering(of: hits[selected]).matches.indices.contains(currentMatch + delta) {
+            currentMatch += delta
+            revealsMatch = true
+            return
+        }
+
+        let start = selected.map { $0 - delta } ?? 0
+
+        for step in 0..<hits.count {
+            let row = ((start - step * delta) % hits.count + hits.count) % hits.count
+            let count = rendering(of: hits[row]).matches.count
+            guard count > 0 else { continue }
+            selection = hits[row].id
+            currentMatch = delta > 0 ? 0 : count - 1
+            revealTarget = selection
+            revealsMatch = true
+            return
+        }
+    }
+
+    /// A note as styled text, kept until its marked body changes.
+    func rendering(of hit: Hit) -> RenderedNote {
+        if let cached = renderings[hit.id], cached.body == hit.body { return cached.rendered }
+        let rendered = NoteRenderer.render(hit.body, marks: (Marks.open, Marks.close))
+        renderings[hit.id] = (hit.body, rendered)
+        return rendered
     }
 
     private func searchOptions(offset: Int) -> SearchOptions {
@@ -157,31 +204,6 @@ final class AppModel {
                 return (hits, counts ? try Search.count(db: db, options: request) : nil)
             }
         }.value
-    }
-
-    private func loadDetail() {
-        guard let id = selection else {
-            note = nil
-            markedBody = nil
-            return
-        }
-        let path = databasePath
-        let match = Search.match(searchOptions(offset: 0))
-        let marks = (Marks.open, Marks.close)
-        let key = "\(id)|\(match)"
-        Task {
-            let loaded: (Store.Note, String?)? = await Task.detached {
-                guard let db = try? Schema.open(path: path), let note = try? Store.note(db: db, id: id) else { return nil }
-                let body = try? Search.markedBody(db: db, match: match, noteID: id, marks: marks)
-                return (note, body ?? nil)
-            }.value
-            // Ignore a slow load that finished after the selection moved on.
-            if selection == id {
-                note = loaded?.0
-                markedBody = loaded?.1
-                detailKey = key
-            }
-        }
     }
 
     // MARK: - Indexing
@@ -274,7 +296,7 @@ final class AppModel {
         if selection == hit.id {
             selection = row + 1 < hits.count ? hits[row + 1].id : row > 0 ? hits[row - 1].id : nil
         }
-        // The list's own removal: the row fades and the rows below slide up.
+        // The stream's own removal: the card fades and its neighbors close the gap.
         withAnimation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .default) {
             _ = hits.remove(at: row)
         }

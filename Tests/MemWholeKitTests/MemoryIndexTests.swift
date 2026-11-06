@@ -113,10 +113,21 @@ private struct Fixture {
 
         let hit = try #require(try f.search("sqlite").first)
         #expect(hit.snippet.contains("[sqlite]"))
-        let db = try Schema.open(path: f.databasePath)
-        let body = try Search.markedBody(db: db, match: Search.ftsQuery("sqlite"), noteID: hit.id, marks: ("[", "]"))
-        #expect(body?.contains("[sqlite] index") == true)
-        #expect(try Store.note(db: db, id: hit.id)?.title == "Note")
+        #expect(hit.body.contains("[sqlite] index"))
+        #expect(hit.title == "Note")
+    }
+
+    @Test func browsingReturnsWholeBodiesThatJSONLeavesOut() throws {
+        let f = try Fixture()
+        let long = String(repeating: "word ", count: 200) + "ending"
+        try f.write("projects/-p/memory/n.md", "# Note\n\(long)")
+        try f.index()
+
+        let hit = try #require(try f.search().first)
+        #expect(hit.body.contains("ending"))
+        #expect(!hit.snippet.contains("ending"))
+        let json = String(decoding: try JSONEncoder().encode(hit), as: UTF8.self)
+        #expect(!json.contains("\"body\""))
     }
 
     @Test func dropsNotesWhoseFilesAreGone() throws {
@@ -136,8 +147,8 @@ private struct Fixture {
         try f.write("projects/-p/memory/k.md", "# Keys\nOPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456")
         try f.index()
 
-        let note = try #require(try Store.note(db: Schema.open(path: f.databasePath), id: f.search().first!.id))
-        #expect(!note.body.contains("sk-abcdefghijklmnopqrstuvwxyz123456"))
+        let hit = try #require(try f.search().first)
+        #expect(!hit.body.contains("sk-abcdefghijklmnopqrstuvwxyz123456"))
     }
 }
 

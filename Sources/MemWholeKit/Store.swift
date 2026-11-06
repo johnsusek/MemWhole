@@ -11,15 +11,6 @@ public enum Store {
         return support.appendingPathComponent("MemWhole/index.sqlite").path
     }
 
-    public struct Note: Sendable {
-        public let id: Int64
-        public let path: String
-        public let title: String?
-        public let body: String
-        public let project: String?
-        public let ts: String?
-    }
-
     public struct Counts: Sendable {
         public var files = 0
         public var notes = 0
@@ -27,15 +18,6 @@ public enum Store {
         public var projects = 0
         /// Total size of the notes' text.
         public var bytes: Int64 = 0
-    }
-
-    public static func note(db: Database, id: Int64) throws -> Note? {
-        let stmt = try db.prepare("SELECT id, path, title, body, project, ts FROM notes WHERE id = ?")
-        try stmt.bind([id])
-        guard try stmt.step() else { return nil }
-        return Note(
-            id: stmt.int64(0), path: stmt.text(1) ?? "", title: stmt.text(2), body: stmt.text(3) ?? "",
-            project: stmt.text(4), ts: stmt.text(5))
     }
 
     public static func counts(db: Database) throws -> Counts {

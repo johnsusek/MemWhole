@@ -5,10 +5,8 @@ import SwiftUI
 /// Menu bar commands. Every action in the window is reachable from here, with a shortcut.
 struct AppCommands: Commands {
     @Bindable var model: AppModel
-    @FocusedValue(\.matchCursor) private var matchCursor
 
     var body: some Commands {
-        SidebarCommands()
         ToolbarCommands()
 
         CommandGroup(after: .newItem) {
@@ -44,6 +42,9 @@ struct AppCommands: Commands {
             Button("Copy Path") { model.selectedHit.map { model.copy($0.path) } }
                 .keyboardShortcut("c", modifiers: [.command, .option])
                 .disabled(model.selectedHit == nil)
+            Button("Copy Note") { model.selectedHit.map { model.copy(Marks.stripped($0.body)) } }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .disabled(model.selectedHit == nil)
         }
 
         // Notes are only ever trashed, never edited: searching replaces the text-editing Find, Spelling and Substitutions menus.
@@ -51,12 +52,12 @@ struct AppCommands: Commands {
             Menu("Find") {
                 Button("Find…") { model.isSearchFocused = true }
                     .keyboardShortcut("f")
-                Button("Find Next") { matchCursor?.step(1) }
+                Button("Find Next") { model.stepMatch(by: 1) }
                     .keyboardShortcut("g")
-                    .disabled((matchCursor?.count ?? 0) < 2)
-                Button("Find Previous") { matchCursor?.step(-1) }
+                    .disabled(model.query.isBlank || model.hits.isEmpty)
+                Button("Find Previous") { model.stepMatch(by: -1) }
                     .keyboardShortcut("g", modifiers: [.command, .shift])
-                    .disabled((matchCursor?.count ?? 0) < 2)
+                    .disabled(model.query.isBlank || model.hits.isEmpty)
             }
         }
 

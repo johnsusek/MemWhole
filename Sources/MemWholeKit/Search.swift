@@ -30,6 +30,12 @@ public struct Hit: Encodable, Sendable, Identifiable {
     public let path: String
     public let snippet: String
     public let score: Double
+    /// The whole note, with matches between the search's marks. Left out of JSON: search output stays short.
+    public let body: String
+
+    enum CodingKeys: CodingKey {
+        case id, ts, project, title, path, snippet, score
+    }
 }
 
 public enum Search {
@@ -58,15 +64,16 @@ public enum Search {
         let (filter, filterParams) = filter(options, match: match)
         let snippet = browsing ? "substr(n.body, 1, \(previewLength))" : "snippet(notes_fts, -1, ?, ?, '…', 24)"
         let score = browsing ? "0.0" : "bm25(notes_fts, 4.0, 1.0)"
+        let body = browsing ? "n.body" : "highlight(notes_fts, 1, ?, ?)"
 
         let stmt = try db.prepare("""
-            SELECT n.id, n.ts, n.project, n.title, n.path, \(snippet), \(score)
+            SELECT n.id, n.ts, n.project, n.title, n.path, \(snippet), \(score), \(body)
             FROM \(source(browsing))
             WHERE \(filter)
             \(options.sort == .date ? "ORDER BY 2 DESC, 7, 1" : "ORDER BY 7, 1")
             LIMIT ? OFFSET ?
             """)
-        try stmt.bind((browsing ? [] : [marks.open, marks.close]) + filterParams + [options.limit, options.offset])
+        try stmt.bind((browsing ? [] : [marks.open, marks.close, marks.open, marks.close]) + filterParams + [options.limit, options.offset])
         var hits: [Hit] = []
         while try stmt.step() {
             hits.append(Hit(
@@ -76,7 +83,8 @@ public enum Search {
                 title: stmt.text(3),
                 path: stmt.text(4) ?? "",
                 snippet: stmt.text(5) ?? "",
-                score: stmt.double(6)))
+                score: stmt.double(6),
+                body: stmt.text(7) ?? ""))
         }
         return hits
     }
@@ -102,17 +110,5 @@ public enum Search {
         if let project = options.project { conditions.append("n.project LIKE ?"); params.append("%\(project)%") }
         if let since = options.since { conditions.append("n.ts >= ?"); params.append(since) }
         return (conditions.isEmpty ? "1" : conditions.joined(separator: " AND "), params)
-    }
-
-    /// A note's body with matches wrapped in `marks`, or nil when only the title matches.
-    public static func markedBody(db: Database, match: String, noteID: Int64,
-                                  marks: (open: String, close: String)) throws -> String? {
-        guard !match.isEmpty else { return nil }
-        let stmt = try db.prepare("""
-            SELECT highlight(notes_fts, 1, ?, ?) FROM notes_fts WHERE notes_fts MATCH ? AND rowid = ?
-            """)
-        try stmt.bind([marks.open, marks.close, match, noteID])
-        guard try stmt.step(), let body = stmt.text(0), body.contains(marks.open) else { return nil }
-        return body
     }
 }
