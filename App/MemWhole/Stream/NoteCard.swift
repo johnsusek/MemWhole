@@ -10,11 +10,11 @@ struct NoteCard: View {
   private var isSelected: Bool { model.selection == hit.id }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: 14) {
       header.allowsHitTesting(false)
       NoteBody(hit: hit, model: model, rendered: model.rendering(of: hit), current: isSelected ? model.currentMatch : nil, revealsMatch: isSelected && model.revealsMatch)
     }
-    .padding(16)
+    .padding(20)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(CardHandle(hit: hit, model: model))
     .background(Color(nsColor: .controlBackgroundColor), in: .rect(cornerRadius: 12))
@@ -34,15 +34,15 @@ struct NoteCard: View {
   }
 
   private var header: some View {
-    VStack(alignment: .leading, spacing: 2) {
+    VStack(alignment: .leading, spacing: 3) {
       HStack(alignment: .firstTextBaseline, spacing: 8) {
-        Text(Format.oneLine(hit.title ?? hit.path)).font(.headline)
+        Text(Format.oneLine(hit.title ?? hit.path)).font(.system(size: 20, weight: .bold))
         Spacer()
-        Text(timestamp).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+        Text(timestamp).font(.callout).foregroundStyle(.secondary).monospacedDigit()
       }
 
       if let project = hit.project {
-        Text(Format.path(project)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+        Text(Format.path(project)).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
       }
     }
   }

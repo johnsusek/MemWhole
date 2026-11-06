@@ -11,7 +11,7 @@ public enum NoteRenderer {
   private struct BlockContext {
     var indent: CGFloat = 0
     var marker: String?
-    var spacing: CGFloat = 8
+    var spacing: CGFloat = 16
     var isQuote = false
   }
 
@@ -25,7 +25,8 @@ public enum NoteRenderer {
     var link: URL?
   }
 
-  private static let listIndent: CGFloat = 20
+  private static let listIndent: CGFloat = 24
+  private static let lineSpacing: CGFloat = 7.5
   private static let webSchemes: Set<String> = ["http", "https", "mailto"]
 
   /// Renders `source`, turning the text between `marks` into matches.
@@ -74,9 +75,9 @@ public enum NoteRenderer {
   private static func block(_ markup: Markup, context: BlockContext, marks: (open: String, close: String), into output: NSMutableAttributedString) {
     switch markup {
     case let heading as Heading:
-      let styles: [NSFont.TextStyle] = [.title2, .title3, .headline]
-      let font = NSFont.preferredFont(forTextStyle: styles[min(heading.level, styles.count) - 1])
-      paragraph(heading.children, style: InlineStyle(font: font, isBold: true), context: context, spacingBefore: 10, into: output)
+      let sizes: [CGFloat] = [20, 18, 16]
+      let font = NSFont.systemFont(ofSize: sizes[min(heading.level, sizes.count) - 1])
+      paragraph(heading.children, style: InlineStyle(font: font, isBold: true), context: context, spacingBefore: 12, into: output)
     case is Markdown.Paragraph:
       paragraph(markup.children, style: InlineStyle(font: bodyFont, isSecondary: context.isQuote), context: context, into: output)
     case let code as CodeBlock:
@@ -90,7 +91,7 @@ public enum NoteRenderer {
       listItems(items, context: context, marks: marks, into: output)
     case is BlockQuote:
       var quote = context
-      quote.indent += 14
+      quote.indent += 16
       quote.isQuote = true
       blocks(markup.children, context: quote, marks: marks, into: output)
     case is ThematicBreak:
@@ -111,7 +112,7 @@ public enum NoteRenderer {
       var item = context
       item.indent += listIndent
       item.marker = entry.marker
-      if offset < items.count - 1 { item.spacing = 3 }
+      if offset < items.count - 1 { item.spacing = 6 }
       blocks(entry.item.children, context: item, marks: marks, into: output)
     }
   }
@@ -123,7 +124,7 @@ public enum NoteRenderer {
     layout.firstLineHeadIndent = context.indent
     layout.paragraphSpacing = context.spacing
     layout.paragraphSpacingBefore = spacingBefore
-    layout.lineSpacing = 2
+    layout.lineSpacing = lineSpacing
 
     if let marker = context.marker {
       layout.firstLineHeadIndent = context.indent - listIndent
@@ -153,6 +154,7 @@ public enum NoteRenderer {
     panel.setWidth(8, type: .absoluteValueType, for: .padding)
     let layout = NSMutableParagraphStyle()
     layout.textBlocks = [panel]
+    layout.lineSpacing = 4
     let text = code.hasSuffix("\n") ? code : code + "\n"
     output.append(NSAttributedString(string: text, attributes: [.font: codeFont(size: bodyFont.pointSize), .foregroundColor: NSColor.labelColor, .paragraphStyle: layout]))
   }
@@ -180,7 +182,7 @@ public enum NoteRenderer {
 
   // MARK: - Inlines
 
-  private static var bodyFont: NSFont { .preferredFont(forTextStyle: .body) }
+  private static var bodyFont: NSFont { .systemFont(ofSize: 16) }
 
   private static func codeFont(size: CGFloat) -> NSFont {
     .monospacedSystemFont(ofSize: size - 1, weight: .regular)

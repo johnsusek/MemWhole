@@ -21,7 +21,7 @@ struct StreamView: View {
           ForEach(rows) { row in
             VStack(spacing: 12) {
               if let day = row.day {
-                Text(day).font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.top, 8)
+                Text(day).font(.callout.weight(.medium)).foregroundStyle(.secondary).padding(.top, 8)
               }
               NoteCard(hit: row.hit)
             }
