@@ -38,11 +38,11 @@ struct NoteCard: View {
       HStack(alignment: .firstTextBaseline, spacing: 8) {
         Text(Format.oneLine(hit.title ?? hit.path)).font(.system(size: 20, weight: .bold))
         Spacer()
-        Text(timestamp).font(.callout).foregroundStyle(.secondary).monospacedDigit()
+        Text(timestamp).font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
       }
 
       if let project = hit.project {
-        Text(Format.path(project)).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+        Text(Format.path(project)).font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
       }
     }
   }
