@@ -1,7 +1,7 @@
 import MemWholeKit
 import SwiftUI
 
-/// Every note the current search finds as one stack of cards, newest or best at the bottom.
+/// Every note the current search finds as one stack of cards, newest or best first.
 struct StreamView: View {
   @Environment(AppModel.self) private var model
   @Environment(\.appearsActive) private var appearsActive
@@ -16,7 +16,7 @@ struct StreamView: View {
     ScrollViewReader { proxy in
       ScrollView {
         LazyVStack(spacing: 12) {
-          if model.hasMore { loadOlderRow }
+          Color.clear.frame(height: 1).id(AppModel.streamStart)
 
           ForEach(rows) { row in
             VStack(spacing: 12) {
@@ -27,18 +27,16 @@ struct StreamView: View {
             }
           }
 
-          Color.clear.frame(height: 1).id(AppModel.streamEnd)
+          if model.hasMore { loadOlderRow }
         }
         .frame(maxWidth: 720)
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
         .frame(maxWidth: .infinity)
       }
-      // Also holds the reading place when older cards land or get measured above it.
-      .defaultScrollAnchor(.bottom)
       .onChange(of: model.revealTarget) { _, target in
         guard let target else { return }
-        proxy.scrollTo(target, anchor: target == AppModel.streamEnd ? .bottom : .top)
+        proxy.scrollTo(target, anchor: .top)
         model.revealTarget = nil
       }
     }
@@ -51,12 +49,12 @@ struct StreamView: View {
     .onChange(of: appearsActive, initial: true) { _, active in model.isStreamActive = active }
   }
 
-  /// Oldest first, with a day label wherever the day changes. Dividers mean nothing in relevance order.
+  /// A day label wherever the day changes. Dividers mean nothing in relevance order.
   private var rows: [Row] {
     var rows: [Row] = []
     var previousDay: Date?
 
-    for hit in model.hits.reversed() {
+    for hit in model.hits {
       let day = model.sort == .date ? Format.parse(hit.ts).map(Calendar.current.startOfDay) : nil
       rows.append(Row(hit: hit, day: day == previousDay ? nil : day.map(label)))
       previousDay = day ?? previousDay

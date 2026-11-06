@@ -21,7 +21,7 @@ final class AppModel {
     var currentMatch = 0
     /// Set to scroll the current match into view; the card clears it once it has.
     var revealsMatch = false
-    /// A card to bring into view, or `streamEnd`; the stream clears it once it has.
+    /// A card to bring into view, or `streamStart`; the stream clears it once it has.
     var revealTarget: Hit.ID?
     /// The card whose context menu is open.
     var menuTarget: Hit.ID?
@@ -69,10 +69,10 @@ final class AppModel {
 
     // MARK: - Search
 
-    /// Results fetched per page; more load as the stream scrolls back to its start.
+    /// Results fetched per page; more load as the stream scrolls to its end.
     static let pageSize = 200
-    /// `revealTarget`'s id for the bottom of the stream.
-    static let streamEnd: Hit.ID = -1
+    /// `revealTarget`'s id for the top of the stream.
+    static let streamStart: Hit.ID = -1
 
     /// Fetches the first page for the current query; a blank query lists every note.
     /// The total depends only on the query and the index, so sort changes skip it.
@@ -136,18 +136,17 @@ final class AppModel {
         }
     }
 
-    /// A new search lands on the selected card's first match, or at the bottom of the stream.
+    /// A new search lands on the selected card's first match, or at the top of the stream.
     private func showNewResults() {
         currentMatch = 0
-        revealTarget = selection ?? Self.streamEnd
+        revealTarget = selection ?? Self.streamStart
         revealsMatch = selectedHit.map { !rendering(of: $0).matches.isEmpty } ?? false
     }
 
-    /// Moves the selection down or up the stream; with none, starts at the bottom.
+    /// Moves the selection down or up the stream; with none, starts at the top.
     func moveSelection(by offset: Int) {
         guard !hits.isEmpty else { return }
-        // `hits` run newest first and the stream runs newest last, so moving down goes back through them.
-        let row = hits.firstIndex { $0.id == selection }.map { $0 - offset } ?? 0
+        let row = hits.firstIndex { $0.id == selection }.map { $0 + offset } ?? 0
         selection = hits[min(max(row, 0), hits.count - 1)].id
         revealTarget = selection
     }
@@ -163,10 +162,10 @@ final class AppModel {
             return
         }
 
-        let start = selected.map { $0 - delta } ?? 0
+        let start = selected.map { $0 + delta } ?? 0
 
         for step in 0..<hits.count {
-            let row = ((start - step * delta) % hits.count + hits.count) % hits.count
+            let row = ((start + step * delta) % hits.count + hits.count) % hits.count
             let count = rendering(of: hits[row]).matches.count
             guard count > 0 else { continue }
             selection = hits[row].id
