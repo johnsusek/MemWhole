@@ -10,11 +10,11 @@ final class CardHandleView: NSView, NSDraggingSource {
   override func mouseDown(with event: NSEvent) {
     guard let hit, let model else { return }
     if model.selection != hit.id { model.selection = hit.id }
-    if event.clickCount == 2, let url = model.fileURL(forNotePath: hit.path) { model.open(url) }
+    if event.clickCount == 2 { model.open(hit.url) }
   }
 
   override func mouseDragged(with event: NSEvent) {
-    guard let hit, let url = model?.fileURL(forNotePath: hit.path) else { return }
+    guard let url = hit?.url else { return }
     let item = NSDraggingItem(pasteboardWriter: url as NSURL)
     let location = convert(event.locationInWindow, from: nil)
     let frame = NSRect(x: location.x - 16, y: location.y - 16, width: 32, height: 32)

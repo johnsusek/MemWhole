@@ -7,16 +7,17 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Indexed Folder") {
-                LabeledContent("Folder") {
-                    Text(model.folderPath.map(Format.path) ?? "None")
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
+            Section("Sources") {
+                ForEach(MemorySource.allCases, id: \.self) { source in
+                    LabeledContent(source.title) {
+                        Text(Format.path(source.root.path))
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
                 }
                 HStack {
-                    Button("Choose…") { model.chooseFolderAndIndex() }
                     Button("Update Now") { model.reindex() }
-                        .disabled(model.folderPath == nil || model.isIndexing)
+                        .disabled(model.isIndexing)
                     Spacer()
                     if model.isIndexing { ProgressView().controlSize(.small) }
                 }

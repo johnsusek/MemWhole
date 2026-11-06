@@ -39,18 +39,6 @@ final class AppModel {
 
     let databasePath = Store.defaultDatabasePath
 
-    var folderPath: String? {
-        get {
-            access(keyPath: \.folderPath)
-            return UserDefaults.standard.string(forKey: "folderPath")
-        }
-        set {
-            withMutation(keyPath: \.folderPath) {
-                UserDefaults.standard.set(newValue, forKey: "folderPath")
-            }
-        }
-    }
-
     var hasIndex: Bool { FileManager.default.fileExists(atPath: databasePath) }
 
     @ObservationIgnored private var searchTask: Task<Void, Never>?
@@ -207,26 +195,8 @@ final class AppModel {
 
     // MARK: - Indexing
 
-    func chooseFolderAndIndex() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.showsHiddenFiles = true
-        panel.prompt = "Index"
-        panel.message = "Choose a folder to index, such as ~/.claude"
-        panel.directoryURL = folderPath.map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.homeDirectoryForCurrentUser
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        folderPath = url.path
-        reindex()
-    }
-
     func reindex() {
-        guard let folderPath, !isIndexing else { return }
-        guard let root = Indexer.resolveFolder(folderPath) else {
-            errorMessage = "Not a folder: \(folderPath)"
-            return
-        }
+        guard !isIndexing else { return }
         isIndexing = true
         progress = "Scanning…"
         errorMessage = nil
@@ -235,7 +205,7 @@ final class AppModel {
         Task {
             let result = await Task.detached {
                 Result {
-                    try Indexer.index(folder: root, databasePath: path, full: false) { line in
+                    try Indexer.index(databasePath: path, full: false) { line in
                         Task { @MainActor in self.progress = line }
                     }
                 }
@@ -272,8 +242,9 @@ final class AppModel {
 
     // MARK: - Trash
 
-    var canTrash: Bool { folderPath != nil && !isIndexing }
-    var canTrashSelection: Bool { selection != nil && canTrash }
+    /// Codex rebuilds its memories from its sessions, so a trashed one could come back.
+    func canTrash(_ hit: Hit) -> Bool { hit.source == .claude && !isIndexing }
+    var canTrashSelection: Bool { selectedHit.map(canTrash) ?? false }
 
     /// Moves the selected note to the Trash.
     func trashSelection() {
@@ -282,9 +253,9 @@ final class AppModel {
 
     /// Moves a note to the Trash and drops its MEMORY.md pointer. A selected note hands the selection to a neighbor.
     func trash(_ hit: Hit) {
-        guard canTrash, let folderPath, let row = hits.firstIndex(where: { $0.id == hit.id }) else { return }
+        guard canTrash(hit), let row = hits.firstIndex(where: { $0.id == hit.id }) else { return }
         do {
-            try Memories.trash(notePath: hit.path, in: URL(fileURLWithPath: folderPath))
+            try Memories.trash(note: hit.url, in: MemorySource.claude.root)
         } catch {
             let alert = NSAlert()
             alert.messageText = "Couldn’t move “\(Format.oneLine(hit.title ?? hit.path))” to the Trash."
@@ -306,13 +277,7 @@ final class AppModel {
     // MARK: - Files and pasteboard
 
     var selectedHit: Hit? { hits.first { $0.id == selection } }
-    var selectedFileURL: URL? { selectedHit.flatMap { fileURL(forNotePath: $0.path) } }
-
-    /// The file a note path (relative to the indexed folder) points at.
-    func fileURL(forNotePath path: String) -> URL? {
-        guard let folderPath else { return nil }
-        return URL(fileURLWithPath: folderPath).appendingPathComponent(path)
-    }
+    var selectedFileURL: URL? { selectedHit?.url }
 
     func open(_ url: URL) {
         NSWorkspace.shared.open(url)

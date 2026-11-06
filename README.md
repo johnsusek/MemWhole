@@ -1,10 +1,10 @@
 # memwhole
 
-Local keyword search over Claude's memory notes: `projects/*/memory/**/*.md` under a `~/.claude`-style folder. See `SPEC.md` for the behavior and `HANDOFF.md` for background.
+Local keyword search over Claude's memory notes (`~/.claude/projects/*/memory/**/*.md`) and Codex's consolidated memories (`~/.codex/memories`). See `SPEC.md` for the behavior and `HANDOFF.md` for background.
 
 ```bash
 swift build -c release
-.build/release/memwhole index ~/.claude           # incremental; --full rebuilds
+.build/release/memwhole index                     # incremental; --full rebuilds
 .build/release/memwhole search release build --project MemWhole
 .build/release/memwhole stats
 swift test
@@ -21,14 +21,14 @@ open App/MemWhole.xcodeproj
 
 `scripts/install-app.sh` does a Release build and installs it in `/Applications`.
 
-Use **File › Index Folder…** (⌘O) to pick `~/.claude` or a copy, then type in the search field. A blank search lists every note. ⌘R updates the index.
+The app finds `~/.claude` and `~/.codex/memories` itself and indexes them on launch. Type in the search field; a blank search lists every note. ⌘R updates the index.
 
 The index lives at `~/Library/Application Support/MemWhole/index.sqlite`, or wherever `--db` / `$MEMWHOLE_DB` points.
 
 ## Search
 
 - Words are ANDed; the last word matches as a prefix. `--raw` passes FTS5 syntax through (`"exact phrase"`, `OR`, `NOT`).
-- Filters: `--project TEXT`, `--since 2026-10-01` or `--since 7d`, `--limit N`.
+- Filters: `--project TEXT`, `--source claude|codex`, `--since 2026-10-01` or `--since 7d`, `--limit N`.
 - `--json` prints machine-readable hits.
 - Results are newest first. `--sort relevance` ranks by match quality instead, with title matches weighted above body matches.
 
@@ -36,7 +36,9 @@ The index lives at `~/Library/Application Support/MemWhole/index.sqlite`, or whe
 
 | File | Role |
 |---|---|
-| `Indexer.swift` | Walks `projects/*/memory/`, indexes changed notes, and works out each note's project. |
+| `MemorySource.swift` | The sources and where their memories live. |
+| `Indexer.swift` | Walks each source, indexes changed notes, and works out each note's project. |
+| `CodexMemories.swift` | Splits Codex's `MEMORY.md` into task groups with a project and date. |
 | `Secrets.swift` | Masks values under `KEY/TOKEN/SECRET/PASSWORD` names and known token shapes before storing. |
 | `Schema.swift` | Tables plus an FTS5 index over `notes.title/body`. |
 | `Search.swift` | Ranked or newest-first search, counts and highlighted bodies. |

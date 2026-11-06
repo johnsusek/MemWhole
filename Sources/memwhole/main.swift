@@ -2,12 +2,12 @@ import Foundation
 import MemWholeKit
 
 let usage = """
-    memwhole: local search over Claude's memory notes
+    memwhole: local search over Claude and Codex memory notes
 
     USAGE
-      memwhole index <folder> [--full]
-      memwhole search <words...> [--limit N] [--project TEXT] [--since DATE|7d]
-                                 [--sort date|relevance] [--raw] [--json]
+      memwhole index [--full]
+      memwhole search <words...> [--limit N] [--project TEXT] [--source claude|codex]
+                                 [--since DATE|7d] [--sort date|relevance] [--raw] [--json]
       memwhole stats
 
     OPTIONS
@@ -65,14 +65,11 @@ func printError(_ message: String) {
 // MARK: - Commands
 
 func runIndex(_ args: Arguments) throws {
-    guard let folder = args.positionals.first else { throw CLIError("index needs a folder") }
-    guard let root = Indexer.resolveFolder(folder) else {
-        throw CLIError("Not a folder: \(folder)")
-    }
+    guard args.positionals.isEmpty else { throw CLIError("index takes no folder: it reads ~/.claude and ~/.codex/memories") }
     let dbPath = databasePath(args)
     let showProgress = isatty(STDERR_FILENO) != 0
     let start = Date()
-    let stats = try Indexer.index(folder: root, databasePath: dbPath, full: args.flags.contains("full")) { line in
+    let stats = try Indexer.index(databasePath: dbPath, full: args.flags.contains("full")) { line in
         guard showProgress else { return }
         let clipped = line.count > 100 ? String(line.prefix(100)) + "…" : line
         FileHandle.standardError.write(Data("\r\u{1B}[2K\(clipped)".utf8))
@@ -97,6 +94,10 @@ func runSearch(_ args: Arguments) throws {
         options.sort = value
     }
     options.project = args.options["project"]
+    if let source = args.options["source"] {
+        guard let value = MemorySource(rawValue: source) else { throw CLIError("--source must be claude or codex") }
+        options.source = value
+    }
     if let limit = args.options["limit"] {
         guard let n = Int(limit), n > 0 else { throw CLIError("--limit must be a positive number") }
         options.limit = n
@@ -129,7 +130,7 @@ func runSearch(_ args: Arguments) throws {
 }
 
 func render(_ hit: Hit, style: Style) -> String {
-    var header = [Format.date(hit.ts)]
+    var header = [Format.date(hit.ts), hit.source.title]
     if let project = hit.project { header.append(Format.path(project)) }
     if let title = hit.title, !title.isBlank { header.append(style.bold(Format.oneLine(title))) }
     let snippet = Format.oneLine(hit.snippet)
@@ -157,6 +158,11 @@ func runStats(_ args: Arguments) throws {
     let counts = try Store.counts(db: db)
     print(style.bold("Notes") + "     \(counts.notes)  \(style.dim(Format.bytes(counts.bytes)))")
     print(style.bold("Projects") + "  \(counts.projects)")
+
+    for source in MemorySource.allCases {
+        print(style.bold(source.title) + "    \(counts.sources[source] ?? 0)")
+    }
+
     let size = (try? FileManager.default.attributesOfItem(atPath: dbPath)[.size] as? Int64) ?? 0
     print("\n" + style.dim("Index: \(Format.path(dbPath))  \(Format.bytes(size))"))
 }

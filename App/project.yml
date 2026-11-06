@@ -33,7 +33,7 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: MemWhole
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         INFOPLIST_KEY_NSHumanReadableCopyright: ""
-        # Reads ~/.claude and shares the CLI's index in ~/Library/Application Support/MemWhole.
+        # Reads ~/.claude and ~/.codex and shares the CLI's index in ~/Library/Application Support/MemWhole.
         ENABLE_APP_SANDBOX: NO
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_STYLE: Automatic

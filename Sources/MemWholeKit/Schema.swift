@@ -2,7 +2,7 @@ import Foundation
 
 public enum Schema {
     /// Bump when the tables change. An index with another version is deleted and rebuilt.
-    static let version = 4
+    static let version = 5
 
     static let sql = """
     PRAGMA journal_mode = WAL;
@@ -10,7 +10,7 @@ public enum Schema {
 
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
-    -- One row per indexed note file, for incremental runs.
+    -- One row per indexed file, for incremental runs. A Codex MEMORY.md holds many notes.
     CREATE TABLE IF NOT EXISTS files (
         id INTEGER PRIMARY KEY,
         path TEXT NOT NULL UNIQUE,
@@ -24,7 +24,8 @@ public enum Schema {
     CREATE TABLE IF NOT EXISTS notes (
         id INTEGER PRIMARY KEY,
         file_id INTEGER NOT NULL,
-        path TEXT NOT NULL,          -- relative to the indexed folder
+        source TEXT NOT NULL,        -- a MemorySource
+        path TEXT NOT NULL,
         title TEXT,
         body TEXT NOT NULL,
         project TEXT,

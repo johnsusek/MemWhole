@@ -20,13 +20,11 @@ final class ActionMenuItem: NSMenuItem {
 extension AppModel {
   /// A card's context menu, which acts on that card whether or not it's selected.
   func menuItems(for hit: Hit) -> [NSMenuItem] {
-    var items: [NSMenuItem] = []
-
-    if let url = fileURL(forNotePath: hit.path) {
-      items.append(ActionMenuItem("Open") { [self] in open(url) })
-      items.append(ActionMenuItem("Show in Finder") { [self] in reveal(url) })
-      items.append(.separator())
-    }
+    var items: [NSMenuItem] = [
+      ActionMenuItem("Open") { [self] in open(hit.url) },
+      ActionMenuItem("Show in Finder") { [self] in reveal(hit.url) },
+      .separator(),
+    ]
 
     if let title = hit.title, !title.isBlank {
       items.append(ActionMenuItem("Copy Title") { [self] in copy(Format.oneLine(title)) })
@@ -35,7 +33,7 @@ extension AppModel {
     items.append(ActionMenuItem("Copy Path") { [self] in copy(hit.path) })
     items.append(ActionMenuItem("Copy Note") { [self] in copy(Marks.stripped(hit.body)) })
     items.append(.separator())
-    items.append(ActionMenuItem("Move to Trash", enabled: canTrash) { [self] in trash(hit) })
+    items.append(ActionMenuItem("Move to Trash", enabled: canTrash(hit)) { [self] in trash(hit) })
     return items
   }
 }

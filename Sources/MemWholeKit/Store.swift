@@ -14,6 +14,7 @@ public enum Store {
     public struct Counts: Sendable {
         public var files = 0
         public var notes = 0
+        public var sources: [MemorySource: Int] = [:]
         /// Distinct known projects among the notes.
         public var projects = 0
         /// Total size of the notes' text.
@@ -29,6 +30,13 @@ public enum Store {
             counts.projects = notes.int(1)
             counts.bytes = notes.int64(2)
         }
+
+        let sources = try db.prepare("SELECT source, COUNT(*) FROM notes GROUP BY source")
+
+        while try sources.step() {
+            if let source = sources.text(0).flatMap(MemorySource.init) { counts.sources[source] = sources.int(1) }
+        }
+
         return counts
     }
 }

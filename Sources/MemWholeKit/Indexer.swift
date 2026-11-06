@@ -7,13 +7,13 @@ public struct IndexStats: Sendable {
     public var removed = 0
 }
 
-/// Walks `projects/*/memory/` under a `~/.claude`-style folder and writes rows for new or changed notes.
+/// Walks one source's folder and writes rows for new or changed notes.
 public final class Indexer {
     private struct Entry {
         let url: URL
         let relativePath: String
-        /// The `projects/<dir>` folder name the note sits under.
-        let projectDir: String
+        /// The `projects/<dir>` folder name a Claude note sits under.
+        let projectDir: String?
         let size: Int64
         let mtime: Double
     }
@@ -25,6 +25,7 @@ public final class Indexer {
     }
 
     private let db: Database
+    private let source: MemorySource
     private let root: URL
     private var projectDirs: [String: String] = [:]
     /// Folders already searched for a `cwd` this run without finding one.
@@ -40,11 +41,12 @@ public final class Indexer {
         return formatter
     }()
 
-    public init(db: Database, root: URL) throws {
+    public init(db: Database, source: MemorySource, root: URL) throws {
         self.db = db
+        self.source = source
         self.root = root
         insertNote = try db.prepare("""
-            INSERT INTO notes(file_id, path, title, body, project, ts) VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO notes(file_id, source, path, title, body, project, ts) VALUES (?, ?, ?, ?, ?, ?, ?)
             """)
         insertProjectDir = try db.prepare("INSERT OR REPLACE INTO project_dirs(dir, project) VALUES (?, ?)")
 
@@ -54,14 +56,23 @@ public final class Indexer {
         }
     }
 
-    /// Opens (or with `full`, recreates) the index at `databasePath` and brings it up to date with `folder`.
-    public static func index(folder: URL, databasePath: String, full: Bool,
+    /// Opens (or with `full`, recreates) the index at `databasePath` and brings it up to date with every source.
+    public static func index(roots: [MemorySource: URL] = MemorySource.roots, databasePath: String, full: Bool,
                              progress: (String) -> Void) throws -> IndexStats {
         if full {
             for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: databasePath + suffix) }
         }
         let db = try Schema.open(path: databasePath)
-        let stats = try Indexer(db: db, root: folder).run(progress: progress)
+        var stats = IndexStats()
+
+        for (source, root) in roots {
+            let run = try Indexer(db: db, source: source, root: root).run(progress: progress)
+            stats.scanned += run.scanned
+            stats.indexed += run.indexed
+            stats.unchanged += run.unchanged
+            stats.removed += run.removed
+        }
+
         try db.exec("INSERT INTO notes_fts(notes_fts) VALUES ('optimize')")
         return stats
     }
@@ -89,7 +100,7 @@ public final class Indexer {
                 stats.unchanged += 1
                 continue
             }
-            progress("[\(number + 1)/\(total)] \(entry.relativePath)")
+            progress("[\(number + 1)/\(total)] \(source.title): \(entry.relativePath)")
             try db.transaction { try index(entry, known: known[entry.url.path]) }
             stats.indexed += 1
         }
@@ -108,32 +119,52 @@ public final class Indexer {
 
     // MARK: - Walk
 
-    /// Every `projects/*/memory/**/*.md` except the `MEMORY.md` index of pointers.
     private func walk() throws -> [Entry] {
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+        let rootPrefix = root.path + "/"
+        var entries: [Entry] = []
+
+        for (url, projectDir) in source == .claude ? claudeFiles() : codexFiles() {
+            guard url.path.hasPrefix(rootPrefix), let values = try? url.resourceValues(forKeys: keys),
+                  values.isRegularFile == true else { continue }
+            entries.append(Entry(
+                url: url,
+                relativePath: String(url.path.dropFirst(rootPrefix.count)),
+                projectDir: projectDir,
+                size: Int64(values.fileSize ?? 0),
+                mtime: values.contentModificationDate?.timeIntervalSince1970 ?? 0))
+        }
+
+        return entries.sorted { $0.relativePath < $1.relativePath }
+    }
+
+    /// Every `projects/*/memory/**/*.md` except the `MEMORY.md` index of pointers.
+    private func claudeFiles() -> [(url: URL, projectDir: String?)] {
         let projects = root.appendingPathComponent("projects", isDirectory: true)
         let fm = FileManager.default
         guard let dirs = try? fm.contentsOfDirectory(atPath: projects.path) else { return [] }
 
-        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
-        let rootPrefix = root.path + "/"
-        var entries: [Entry] = []
+        var files: [(url: URL, projectDir: String?)] = []
+
         for dir in dirs.sorted() {
             let memory = projects.appendingPathComponent(dir).appendingPathComponent("memory", isDirectory: true)
-            guard let enumerator = fm.enumerator(at: memory, includingPropertiesForKeys: keys) else { continue }
-            for case let url as URL in enumerator {
-                guard url.pathExtension == "md", url.lastPathComponent != "MEMORY.md",
-                      url.path.hasPrefix(rootPrefix) else { continue }
-                let values = try url.resourceValues(forKeys: Set(keys))
-                guard values.isRegularFile == true else { continue }
-                entries.append(Entry(
-                    url: url,
-                    relativePath: String(url.path.dropFirst(rootPrefix.count)),
-                    projectDir: dir,
-                    size: Int64(values.fileSize ?? 0),
-                    mtime: values.contentModificationDate?.timeIntervalSince1970 ?? 0))
+            guard let enumerator = fm.enumerator(at: memory, includingPropertiesForKeys: nil) else { continue }
+
+            for case let url as URL in enumerator where url.pathExtension == "md" && url.lastPathComponent != "MEMORY.md" {
+                files.append((url, dir))
             }
         }
-        return entries.sorted { $0.relativePath < $1.relativePath }
+
+        return files
+    }
+
+    /// The consolidated memory and the notes written by hand. `raw_memories.md` and `rollout_summaries/` feed the
+    /// consolidation, so they would only repeat it.
+    private func codexFiles() -> [(url: URL, projectDir: String?)] {
+        let notes = root.appendingPathComponent("extensions/ad_hoc/notes", isDirectory: true)
+        let adHoc = (try? FileManager.default.contentsOfDirectory(at: notes, includingPropertiesForKeys: nil)) ?? []
+        let consolidated = [root.appendingPathComponent("MEMORY.md"), root.appendingPathComponent("memory_summary.md")]
+        return (consolidated + adHoc.filter { $0.pathExtension == "md" }).map { ($0, nil) }
     }
 
     private func knownFiles() throws -> [String: KnownFile] {
@@ -159,15 +190,27 @@ public final class Indexer {
         }
 
         if let text = readText(entry) {
-            let front = Self.frontmatter(text)
-            let heading = text.split(separator: "\n").first { $0.hasPrefix("# ") }.map { String($0.dropFirst(2)) }
-            let title = front["name"] ?? heading ?? entry.url.deletingPathExtension().lastPathComponent
-            let ts = isoFormatter.string(from: Date(timeIntervalSince1970: entry.mtime))
-            try insertNote.run(fileID, entry.relativePath, title, Secrets.maskText(text),
-                               try project(forDir: entry.projectDir), ts)
+            let modified = isoFormatter.string(from: Date(timeIntervalSince1970: entry.mtime))
+
+            for note in try notes(in: text, entry) {
+                try insertNote.run(fileID, source.rawValue, entry.url.path, note.title, Secrets.maskText(note.body),
+                                   note.project, note.ts ?? modified)
+            }
         }
 
         try db.prepare("UPDATE files SET size = ?, mtime = ? WHERE id = ?").run(entry.size, entry.mtime, fileID)
+    }
+
+    private func notes(in text: String, _ entry: Entry) throws -> [Note] {
+        if source == .codex, entry.url.lastPathComponent == "MEMORY.md" { return CodexMemories.taskGroups(in: text) }
+        if source == .codex, entry.url.lastPathComponent == "memory_summary.md" {
+            return [Note(title: "Memory Summary", body: text)]
+        }
+
+        let front = Self.frontmatter(text)
+        let heading = text.split(separator: "\n").first { $0.hasPrefix("# ") }.map { String($0.dropFirst(2)) }
+        let title = front["name"] ?? heading ?? entry.url.deletingPathExtension().lastPathComponent
+        return [Note(title: title, body: text, project: try entry.projectDir.flatMap { try project(forDir: $0) })]
     }
 
     private func removeRows(fileID: Int64, dropFile: Bool) throws {

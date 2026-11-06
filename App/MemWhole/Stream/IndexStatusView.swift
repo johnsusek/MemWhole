@@ -19,7 +19,6 @@ struct IndexStatusView: View {
         .padding(.vertical, 8)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
-        .help(model.folderPath.map { "Indexing \(Format.path($0))" } ?? "No folder chosen")
         .accessibilityElement(children: .combine)
     }
 }

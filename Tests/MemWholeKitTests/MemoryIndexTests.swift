@@ -2,9 +2,10 @@ import AppKit
 import Testing
 @testable import MemWholeKit
 
-/// A throwaway `~/.claude`-style folder and index for one test.
+/// Throwaway `~/.claude` and `~/.codex/memories` style folders and an index for one test.
 private struct Fixture {
     let root: URL
+    let codexRoot: URL
     let databasePath: String
 
     init() throws {
@@ -12,12 +13,15 @@ private struct Fixture {
             .appendingPathComponent("memwhole-tests-\(UUID().uuidString)", isDirectory: true)
         let folder = base.appendingPathComponent("claude", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let codexFolder = base.appendingPathComponent("codex", isDirectory: true)
+        try FileManager.default.createDirectory(at: codexFolder, withIntermediateDirectories: true)
         root = try #require(Indexer.resolveFolder(folder.path))
+        codexRoot = try #require(Indexer.resolveFolder(codexFolder.path))
         databasePath = base.appendingPathComponent("index.sqlite").path
     }
 
-    func write(_ relativePath: String, _ text: String, modified: Date? = nil) throws {
-        let url = root.appendingPathComponent(relativePath)
+    func write(_ relativePath: String, _ text: String, modified: Date? = nil, in folder: URL? = nil) throws {
+        let url = (folder ?? root).appendingPathComponent(relativePath)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try text.write(to: url, atomically: true, encoding: .utf8)
         if let modified {
@@ -31,11 +35,12 @@ private struct Fixture {
 
     @discardableResult
     func index() throws -> IndexStats {
-        try Indexer.index(folder: root, databasePath: databasePath, full: false) { _ in }
+        try Indexer.index(roots: [.claude: root, .codex: codexRoot], databasePath: databasePath, full: false) { _ in }
     }
 
-    func search(_ query: String = "", sort: SearchSort = .date) throws -> [Hit] {
+    func search(_ query: String = "", sort: SearchSort = .date, source: MemorySource? = nil) throws -> [Hit] {
         var options = SearchOptions()
+        options.source = source
         options.query = query
         options.limit = 100
         options.sort = sort
@@ -59,7 +64,8 @@ private struct Fixture {
         let hits = try f.search("release")
         #expect(hits.count == 1)
         #expect(hits.first?.title == "build-steps")
-        #expect(hits.first?.path == "projects/-Users-me-App/memory/build.md")
+        #expect(hits.first?.path == f.root.appendingPathComponent("projects/-Users-me-App/memory/build.md").path)
+        #expect(hits.first?.source == .claude)
 
         let counts = try Store.counts(db: Schema.open(path: f.databasePath))
         #expect(counts.notes == 1)
@@ -152,6 +158,81 @@ private struct Fixture {
     }
 }
 
+@Suite struct CodexMemoryTests {
+    private let memory = """
+        # Task Group: Build pipeline
+
+        scope: Release builds.
+        applies_to: cwd=/Users/me/App; reuse_rule=check first.
+
+        ## Task 1: Fix the build, outcome success
+
+        - rollout_summaries/2026-10-02T08-00-00-aaaa-first.md (cwd=/Users/me/App)
+        - rollout_summaries/2026-10-30T18-50-32-bbbb-second.md (cwd=/Users/me/App)
+
+        # Task Group: Shared habits
+
+        scope: Everywhere.
+        applies_to: cwd=multiple explicitly named projects; reuse_rule=matching tools only.
+
+        """
+
+    @Test func splitsTaskGroups() {
+        let groups = CodexMemories.taskGroups(in: "Preamble\n\n" + memory)
+        #expect(groups.map(\.title) == ["Build pipeline", "Shared habits"])
+        #expect(groups[0].project == "/Users/me/App")
+        #expect(groups[0].ts == "2026-10-30T18:50:32.000Z")
+        #expect(!groups[0].body.contains("Task Group"))
+        #expect(!groups[0].body.contains("Shared habits"))
+        #expect(groups[1].project == nil)
+        #expect(groups[1].ts == nil)
+    }
+
+    @Test func indexesConsolidatedMemoryAndHandWrittenNotes() throws {
+        let fixture = try Fixture()
+        let modified = Date(timeIntervalSince1970: 1_800_000_000)
+        try fixture.write("MEMORY.md", memory, modified: modified, in: fixture.codexRoot)
+        try fixture.write("memory_summary.md", "v1\n\n## User Profile\n\nBuilds Mac apps.", in: fixture.codexRoot)
+        try fixture.write("extensions/ad_hoc/notes/2026-07-11-docs.md", "# Offer to save\n\nResearch goes in docs.", in: fixture.codexRoot)
+        try fixture.write("raw_memories.md", "# Raw\n\nrelease builds", in: fixture.codexRoot)
+        try fixture.write("rollout_summaries/2026-10-02T08-00-00-aaaa-first.md", "release builds", in: fixture.codexRoot)
+        try fixture.write("projects/-p/memory/claude.md", "# Claude note\nrelease builds")
+        try fixture.index()
+
+        let hits = try fixture.search(source: .codex)
+        #expect(Set(hits.compactMap(\.title)) == ["Build pipeline", "Shared habits", "Memory Summary", "Offer to save"])
+        #expect(hits.allSatisfy { $0.source == .codex })
+        #expect(try fixture.search(source: .claude).map(\.title) == ["Claude note"])
+
+        let group = try #require(hits.first { $0.title == "Build pipeline" })
+        #expect(group.ts == "2026-10-30T18:50:32.000Z")
+        #expect(group.path == fixture.codexRoot.appendingPathComponent("MEMORY.md").path)
+
+        let undated = try #require(hits.first { $0.title == "Shared habits" })
+        #expect(Format.parse(undated.ts) == modified)
+    }
+
+    @Test func replacesGroupsWhenConsolidationRewritesTheFile() throws {
+        let fixture = try Fixture()
+        try fixture.write("MEMORY.md", memory, modified: Date(timeIntervalSince1970: 1_800_000_000), in: fixture.codexRoot)
+        try fixture.index()
+        try fixture.write("MEMORY.md", "# Task Group: Only one\n\nscope: Later.", in: fixture.codexRoot)
+        try fixture.index()
+        #expect(try fixture.search().map(\.title) == ["Only one"])
+
+        try FileManager.default.removeItem(at: fixture.codexRoot.appendingPathComponent("MEMORY.md"))
+        #expect(try fixture.index().removed == 1)
+        #expect(try fixture.search().isEmpty)
+    }
+
+    @Test func masksSecretsInTaskGroups() throws {
+        let fixture = try Fixture()
+        try fixture.write("MEMORY.md", "# Task Group: Keys\n\nOPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456", in: fixture.codexRoot)
+        try fixture.index()
+        #expect(try !fixture.search().contains { $0.body.contains("sk-abcdefghijklmnopqrstuvwxyz123456") })
+    }
+}
+
 @Suite struct TrashTests {
     @Test func trashesNoteAndItsPointer() throws {
         let f = try Fixture()
@@ -162,7 +243,7 @@ private struct Fixture {
         try f.index()
 
         var trashed: [URL] = []
-        try Memories.trash(notePath: "projects/-Users-me-App/memory/build.md", in: f.root) {
+        try Memories.trash(note: f.root.appendingPathComponent("projects/-Users-me-App/memory/build.md"), in: f.root) {
             trashed.append($0)
             try FileManager.default.removeItem(at: $0)
         }
@@ -180,7 +261,7 @@ private struct Fixture {
         try f.write("projects/-Users-me-App/memory/topics/a.md", "# A\nbody")
         try f.index()
 
-        try Memories.trash(notePath: "projects/-Users-me-App/memory/topics/a.md", in: f.root) {
+        try Memories.trash(note: f.root.appendingPathComponent("projects/-Users-me-App/memory/topics/a.md"), in: f.root) {
             try FileManager.default.removeItem(at: $0)
         }
         try f.index()
@@ -192,7 +273,7 @@ private struct Fixture {
         try f.write("projects/-Users-me-App/memory/MEMORY.md", "- [Gone](gone.md) — missing\n")
         struct Failure: Error {}
         #expect(throws: Failure.self) {
-            try Memories.trash(notePath: "projects/-Users-me-App/memory/gone.md", in: f.root) { _ in throw Failure() }
+            try Memories.trash(note: f.root.appendingPathComponent("projects/-Users-me-App/memory/gone.md"), in: f.root) { _ in throw Failure() }
         }
         let index = try String(contentsOf: f.root.appendingPathComponent("projects/-Users-me-App/memory/MEMORY.md"), encoding: .utf8)
         #expect(index == "- [Gone](gone.md) — missing\n")

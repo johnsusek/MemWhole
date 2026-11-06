@@ -18,11 +18,9 @@ struct MainToolbar: CustomizableToolbarContent {
     }
 
     ToolbarItem(id: "update") {
-      Button("Update Index", systemImage: "arrow.clockwise") {
-        model.folderPath == nil ? model.chooseFolderAndIndex() : model.reindex()
-      }
-      .disabled(model.isIndexing)
-      .help(model.folderPath.map { "Update the index of \(Format.path($0)) (⌘R)" } ?? "Choose a folder to index")
+      Button("Update Index", systemImage: "arrow.clockwise") { model.reindex() }
+        .disabled(model.isIndexing)
+        .help("Update the index (⌘R)")
     }
 
     ToolbarItem(id: "reveal") {

@@ -10,11 +10,9 @@ struct AppCommands: Commands {
         ToolbarCommands()
 
         CommandGroup(after: .newItem) {
-            Button("Index Folder…") { model.chooseFolderAndIndex() }
-                .keyboardShortcut("o")
             Button("Update Index") { model.reindex() }
                 .keyboardShortcut("r")
-                .disabled(model.folderPath == nil || model.isIndexing)
+                .disabled(model.isIndexing)
             Divider()
             Button("Open") { model.selectedFileURL.map(model.open) }
                 .keyboardShortcut(.downArrow)

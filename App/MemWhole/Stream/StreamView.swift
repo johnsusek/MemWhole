@@ -77,20 +77,11 @@ struct StreamView: View {
 
   @ViewBuilder
   private var emptyState: some View {
-    if !model.hasIndex && !model.isIndexing {
-      ContentUnavailableView {
-        Label("No Index Yet", systemImage: "tray")
-      } description: {
-        Text("Choose your ~/.claude folder.")
-      } actions: {
-        Button("Choose Folder…") { model.chooseFolderAndIndex() }
-          .buttonStyle(.borderedProminent)
-      }
-    } else if let error = model.errorMessage {
+    if let error = model.errorMessage {
       ContentUnavailableView("Something Went Wrong", systemImage: "exclamationmark.triangle", description: Text(error))
     } else if model.hits.isEmpty, model.total == 0 {
       if model.query.isBlank {
-        ContentUnavailableView("No Memories", systemImage: "brain", description: Text("No memory notes in the indexed folder yet."))
+        ContentUnavailableView("No Memories", systemImage: "brain", description: Text("Nothing in ~/.claude or ~/.codex/memories yet."))
       } else {
         ContentUnavailableView.search(text: model.query)
       }

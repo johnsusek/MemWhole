@@ -2,13 +2,12 @@ import Foundation
 
 /// Removing memory notes from disk. The index catches up on the next (incremental) run.
 public enum Memories {
-    /// Moves the note at `notePath` (relative to `root`) to the Trash and drops its pointer line from
+    /// Moves `note`, a Claude note under `root`, to the Trash and drops its pointer line from
     /// the project's `memory/MEMORY.md`. `trash` stands in for the Trash in tests.
-    public static func trash(notePath: String, in root: URL,
+    public static func trash(note: URL, in root: URL,
                              trash: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) throws {
-        let url = root.appendingPathComponent(notePath)
-        try trash(url)
-        try removePointer(to: notePath, in: root)
+        try trash(note)
+        try removePointer(to: String(note.path.dropFirst(root.path.count + 1)), in: root)
     }
 
     /// Drops lines of `projects/<dir>/memory/MEMORY.md` that link to the note, leaving the rest as written.

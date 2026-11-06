@@ -6,6 +6,7 @@ public struct SearchOptions: Sendable {
     /// Rows to skip, for paging through results.
     public var offset = 0
     public var project: String?
+    public var source: MemorySource?
     /// ISO date or timestamp prefix, compared against `ts`.
     public var since: String?
     /// Pass the query to FTS5 as written instead of quoting each word.
@@ -24,17 +25,21 @@ public enum SearchSort: String, CaseIterable, Sendable {
 public struct Hit: Encodable, Sendable, Identifiable {
     /// The note's row id.
     public let id: Int64
+    public let source: MemorySource
     public let ts: String?
     public let project: String?
     public let title: String?
+    /// The note's file. A Codex task group shares its `MEMORY.md` with the others.
     public let path: String
     public let snippet: String
     public let score: Double
     /// The whole note, with matches between the search's marks. Left out of JSON: search output stays short.
     public let body: String
 
+    public var url: URL { URL(fileURLWithPath: path) }
+
     enum CodingKeys: CodingKey {
-        case id, ts, project, title, path, snippet, score
+        case id, source, ts, project, title, path, snippet, score
     }
 }
 
@@ -67,7 +72,7 @@ public enum Search {
         let body = browsing ? "n.body" : "highlight(notes_fts, 1, ?, ?)"
 
         let stmt = try db.prepare("""
-            SELECT n.id, n.ts, n.project, n.title, n.path, \(snippet), \(score), \(body)
+            SELECT n.id, n.ts, n.project, n.title, n.path, \(snippet), \(score), \(body), n.source
             FROM \(source(browsing))
             WHERE \(filter)
             \(options.sort == .date ? "ORDER BY 2 DESC, 7, 1" : "ORDER BY 7, 1")
@@ -78,6 +83,7 @@ public enum Search {
         while try stmt.step() {
             hits.append(Hit(
                 id: stmt.int64(0),
+                source: MemorySource(rawValue: stmt.text(8) ?? "")!,
                 ts: stmt.text(1),
                 project: stmt.text(2),
                 title: stmt.text(3),
@@ -108,6 +114,7 @@ public enum Search {
         var params: [SQLBindable?] = []
         if !match.isEmpty { conditions.append("notes_fts MATCH ?"); params.append(match) }
         if let project = options.project { conditions.append("n.project LIKE ?"); params.append("%\(project)%") }
+        if let source = options.source { conditions.append("n.source = ?"); params.append(source.rawValue) }
         if let since = options.since { conditions.append("n.ts >= ?"); params.append(since) }
         return (conditions.isEmpty ? "1" : conditions.joined(separator: " AND "), params)
     }

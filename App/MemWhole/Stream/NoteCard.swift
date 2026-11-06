@@ -41,10 +41,13 @@ struct NoteCard: View {
         Text(timestamp).font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
       }
 
-      if let project = hit.project {
-        Text(Format.path(project)).font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-      }
+      Text(origin).font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
     }
+  }
+
+  private var origin: String {
+    guard let project = hit.project else { return hit.source.title }
+    return "\(hit.source.title) · \(Format.path(project))"
   }
 
   /// In date order the day divider already says which day.
