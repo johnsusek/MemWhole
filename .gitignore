@@ -8,3 +8,6 @@
 # App build output (xcodebuild -derivedDataPath)
 App/.build/
 xcuserdata/
+
+# Private working notes
+/notes/
