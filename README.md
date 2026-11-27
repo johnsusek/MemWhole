@@ -1,6 +1,6 @@
 # memwhole
 
-Local keyword search over Claude's memory notes (`~/.claude/projects/*/memory/**/*.md`) and Codex's consolidated memories (`~/.codex/memories`). See `SPEC.md` for the behavior and `HANDOFF.md` for background.
+Local keyword search over Claude's memory notes (`~/.claude/projects/*/memory/**/*.md`) and Codex's consolidated memories (`~/.codex/memories`).
 
 ```bash
 swift build -c release
